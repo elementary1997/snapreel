@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04 # старая glibc — бинарник заработает и на новых дистрибутивах
+            label: linux-x86_64
+            artifact: snapreel-linux-x86_64
+          - os: macos-14 # Apple Silicon
+            label: macos-arm64
+            artifact: snapreel-macos-arm64
+          - os: macos-13 # Intel
+            label: macos-x86_64
+            artifact: snapreel-macos-x86_64
+          - os: windows-latest
+            label: windows-x86_64
+            artifact: snapreel-windows-x86_64.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[daemon]" pyinstaller
+
+      - name: Build
+        working-directory: packaging
+        run: pyinstaller snapreel.spec --noconfirm --distpath ../dist
+
+      - name: Smoke test the binary
+        shell: bash
+        run: |
+          # бинарник обязан отвечать без установленного Python-окружения
+          ./dist/snapreel${{ runner.os == 'Windows' && '.exe' || '' }} --help
+          ./dist/snapreel${{ runner.os == 'Windows' && '.exe' || '' }} hotkey show
+
+      - name: Rename
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            mv dist/snapreel.exe "dist/${{ matrix.artifact }}"
+          else
+            mv dist/snapreel "dist/${{ matrix.artifact }}"
+            chmod +x "dist/${{ matrix.artifact }}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: artifacts
+        run: sha256sum snapreel-* > SHA256SUMS
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "snapreel ${{ github.ref_name }}" \
+            --notes "Готовые бинарники. Отдельно нужен ffmpeg в PATH — поставит \`snapreel setup\`.
+
+          macOS: бинарник не подписан, при первом запуске снимите карантин:
+          \`xattr -d com.apple.quarantine ./snapreel-macos-*\`
+
+          Полный список изменений — CHANGELOG.md." \
+            artifacts/*

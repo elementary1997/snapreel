@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "snapreel"
+version = "0.1.0"
+description = "Запись видео выделенной области экрана по хоткею с копированием файла в буфер обмена"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+daemon = ["pynput>=1.7"]
+dev = ["pytest>=8.0", "pynput>=1.7", "ruff>=0.6"]
+
+[project.scripts]
+snapreel = "snapreel.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/snapreel"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# E,F — базовые ошибки; I — порядок импортов; UP — современный синтаксис;
+# B — bugbear; RUF — правила самого ruff (включая кириллицу в строках).
+select = ["E", "F", "I", "UP", "B", "RUF"]
+ignore = [
+    "RUF001", # в строках намеренно кириллица: сообщения пользователю по-русски
+    "RUF002",
+    "RUF003",
+]

@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Окружения
+.venv/
+venv/
+.env
+
+# Инструменты
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Записанные клипы — артефакты работы, не исходники
+*.mp4
+*.gif
+
+# ОС и редакторы
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
