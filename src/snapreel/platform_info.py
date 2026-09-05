@@ -114,7 +114,12 @@ def _virtual_desktop_xrandr() -> Region | None:
         return None
     try:
         out = subprocess.run(
-            ["xrandr", "--query"], capture_output=True, text=True, timeout=5, check=True
+            ["xrandr", "--query"],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=5,
+            check=True,
         ).stdout
     except (subprocess.SubprocessError, OSError):
         return None

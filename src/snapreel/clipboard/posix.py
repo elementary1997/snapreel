@@ -25,7 +25,9 @@ def macos_copy_files(paths: list[Path]) -> None:
     script = (
         f"set the clipboard to {{{items}}}" if len(paths) > 1 else f"set the clipboard to {items}"
     )
-    result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=15)
+    result = subprocess.run(
+        ["osascript", "-e", script], capture_output=True, text=True, errors="replace", timeout=15
+    )
     if result.returncode != 0:
         raise ClipboardError(f"osascript не положил файл в буфер: {result.stderr.strip()}")
 

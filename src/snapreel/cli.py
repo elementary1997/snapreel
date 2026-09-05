@@ -12,6 +12,7 @@ from . import autostart, deps, storage
 from . import config as config_module
 from . import region as region_module
 from .backends import CaptureError, for_environment
+from .config import Config
 from .encode import EncodeError
 from .errors import OverlayUnavailable, SelectionCancelled
 from .platform_info import Platform, detect
@@ -184,7 +185,7 @@ def _ask_hotkey(prompt: str, current: str, assume_yes: bool) -> str:
     if assume_yes or not _interactive():
         return current
     while True:
-        raw = input(f"{prompt} [{autostart.describe(current)}]: ").strip()
+        raw = input(f"{prompt} [{autostart.describe_safe(current)}]: ").strip()
         if not raw:
             return current
         try:
@@ -220,12 +221,22 @@ def _setup(cfg, args) -> int:
                 return 2
             setattr(cfg, attribute, autostart.to_pynput(provided))
         else:
-            setattr(cfg, attribute, _ask_hotkey(label, getattr(cfg, attribute), args.yes))
+            current = getattr(cfg, attribute)
+            try:
+                autostart.validate(current)
+            except autostart.HotkeySetupError as exc:
+                # setup — это команда починки, которую советует doctor:
+                # испорченное значение она чинит, а не спотыкается о него
+                default = getattr(Config(), attribute)
+                print(f"{label}: в конфиге испорчено — {exc}")
+                print(f"  беру значение по умолчанию: {autostart.describe(default)}")
+                current = default
+            setattr(cfg, attribute, _ask_hotkey(label, current, args.yes))
 
     path = config_module.save(cfg, args.config)
     print(f"\nКонфиг сохранён: {path}")
-    print(f"  MP4: {autostart.describe(cfg.hotkey_mp4)}")
-    print(f"  GIF: {autostart.describe(cfg.hotkey_gif)}")
+    print(f"  MP4: {autostart.describe_safe(cfg.hotkey_mp4)}")
+    print(f"  GIF: {autostart.describe_safe(cfg.hotkey_gif)}")
 
     if args.no_hotkey:
         return 0

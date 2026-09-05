@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import pathlib
 import subprocess
 import time
 from datetime import datetime
@@ -373,3 +374,94 @@ def test_daemon_refuses_an_unparsable_hotkey(tmp_path, capsys):
 
     assert code == 2
     assert "Traceback" not in capsys.readouterr().err
+
+
+# --- круг 3: команда починки чинит, а не падает --------------------------
+
+
+def test_setup_repairs_a_broken_hotkey_from_the_config(tmp_path, monkeypatch, capsys):
+    """doctor советует setup как починку — она не вправе спотыкаться о то же значение."""
+    path = tmp_path / "config.toml"
+    path.write_text('hotkey_mp4 = "<ctrl>"\n', encoding="utf-8")
+    monkeypatch.setattr(cli, "detect", lambda: X11)
+
+    code = cli.main(["--config", str(path), "setup", "--yes", "--no-deps", "--no-hotkey"])
+    output = capsys.readouterr()
+
+    assert code == 0
+    assert "Traceback" not in output.err
+    assert config_module.load(path).hotkey_mp4 == Config().hotkey_mp4
+
+
+def test_hotkey_prompt_survives_a_broken_current_value(tty, answers, capsys):
+    answers("")
+    assert cli._ask_hotkey("Хоткей", "<ctrl>", assume_yes=False) == "<ctrl>"
+    assert "Traceback" not in capsys.readouterr().out
+
+
+# --- круг 3: вывод внешних утилит не обязан быть валидным UTF-8 ----------
+
+
+def test_undecodable_stderr_becomes_encode_error(monkeypatch, tmp_path):
+    """Имена файлов и вывод ffmpeg не обязаны быть UTF-8; строгое декодирование роняло запись."""
+
+    def undecodable(command, **kwargs):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(encode.subprocess, "run", undecodable)
+
+    with pytest.raises(EncodeError):
+        encode.to_gif(tmp_path / "in.mp4", tmp_path / "out.gif", Config())
+
+
+def test_undecodable_output_keeps_the_clip(wired, tmp_path, monkeypatch):
+    wired()
+
+    def undecodable(command, **kwargs):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(encode.subprocess, "run", undecodable)
+
+    result = recorder.record(
+        Config(output_dir=str(tmp_path / "clips"), notify=False),
+        region=Region(0, 0, 100, 100),
+        as_gif=True,
+        indicator=False,
+        env=X11,
+    )
+
+    assert result.video.is_file()
+    assert result.payload == result.video
+    assert result.gif_error
+    assert wired.copied == [result.video]
+
+
+def test_probe_survives_an_undecodable_answer(monkeypatch, tmp_path):
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"data")
+
+    def undecodable(command, **kwargs):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(encode.subprocess, "run", undecodable)
+
+    info = encode.probe(clip, Config())
+
+    assert info is not None
+    assert info.size_bytes == 4
+
+
+def test_external_output_is_decoded_leniently():
+    """errors=replace на каждом вызове: иначе один странный байт в выводе роняет команду."""
+    import re
+
+    package = pathlib.Path(encode.__file__).parent
+    strict = re.compile(r"text=True(?!\s*,\s*errors=)")
+    offenders = [
+        f"{path.relative_to(package)}:{source[: match.start()].count(chr(10)) + 1}"
+        for path in sorted(package.rglob("*.py"))
+        for source in [path.read_text(encoding="utf-8")]
+        for match in strict.finditer(source)
+    ]
+
+    assert offenders == []

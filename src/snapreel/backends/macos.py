@@ -100,6 +100,7 @@ class AvFoundationBackend(CaptureBackend):
             ],
             capture_output=True,
             text=True,
+            errors="replace",
             timeout=20,
         )
         # ffmpeg завершается с ошибкой — это ожидаемо, список уходит в stderr
@@ -141,6 +142,7 @@ class AvFoundationBackend(CaptureBackend):
                 ],
                 capture_output=True,
                 text=True,
+                errors="replace",
                 timeout=30,
             )
         except (subprocess.SubprocessError, OSError):

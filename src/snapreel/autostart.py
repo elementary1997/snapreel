@@ -201,7 +201,9 @@ def remove(env: Environment | None = None) -> Outcome:
 def _gsettings(*args: str) -> str:
     if not shutil.which("gsettings"):
         raise HotkeySetupError("не найден gsettings — это не GNOME")
-    result = subprocess.run(["gsettings", *args], capture_output=True, text=True, timeout=15)
+    result = subprocess.run(
+        ["gsettings", *args], capture_output=True, text=True, errors="replace", timeout=15
+    )
     if result.returncode != 0:
         raise HotkeySetupError(result.stderr.strip() or "gsettings вернул ошибку")
     return result.stdout.strip()
@@ -283,6 +285,7 @@ def _powershell(script: str) -> None:
         ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
         capture_output=True,
         text=True,
+        errors="replace",
         timeout=60,
     )
     if result.returncode != 0:
@@ -361,7 +364,11 @@ def install_launch_agent() -> Outcome:
     path.write_text(launch_agent_plist(), encoding="utf-8")
     subprocess.run(["launchctl", "unload", str(path)], capture_output=True, timeout=30)
     result = subprocess.run(
-        ["launchctl", "load", str(path)], capture_output=True, text=True, timeout=30
+        ["launchctl", "load", str(path)],
+        capture_output=True,
+        text=True,
+        errors="replace",
+        timeout=30,
     )
     if result.returncode != 0:
         return Outcome(False, result.stderr.strip() or "launchctl load не сработал")

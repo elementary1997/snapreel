@@ -73,3 +73,23 @@ def wired(monkeypatch, tmp_path):
     install.copied = copied
     install.backends = backends
     return install
+
+
+@pytest.fixture
+def tty(monkeypatch):
+    """Делает вид, что мы в терминале: иначе диалоги молча берут текущее значение."""
+    from snapreel import cli
+
+    monkeypatch.setattr(cli, "_interactive", lambda: True)
+
+
+@pytest.fixture
+def answers(monkeypatch):
+    """Подставляет ответы на input по очереди; возвращает остаток очереди."""
+
+    def feed(*values):
+        queue = list(values)
+        monkeypatch.setattr("builtins.input", lambda _prompt="": queue.pop(0))
+        return queue
+
+    return feed

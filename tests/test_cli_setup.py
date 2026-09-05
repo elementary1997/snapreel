@@ -11,21 +11,6 @@ from snapreel.platform_info import Environment, Platform
 X11 = Environment(Platform.LINUX_X11, is_wsl=False)
 
 
-@pytest.fixture
-def tty(monkeypatch):
-    monkeypatch.setattr(cli, "_interactive", lambda: True)
-
-
-@pytest.fixture
-def answers(monkeypatch):
-    def feed(*values):
-        queue = list(values)
-        monkeypatch.setattr("builtins.input", lambda _prompt="": queue.pop(0))
-        return queue
-
-    return feed
-
-
 def test_ask_hotkey_keeps_current_on_empty_input(tty, answers):
     answers("")
     assert cli._ask_hotkey("Хоткей", "<ctrl>+<alt>+r", assume_yes=False) == "<ctrl>+<alt>+r"
