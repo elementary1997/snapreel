@@ -62,9 +62,11 @@ def test_new_path_avoids_collisions(tmp_path):
 
 
 def test_prune_removes_only_old_clips(tmp_path):
+    # имена обязаны совпадать с шаблоном: чужие видео prune не трогает,
+    # см. tests/test_regressions.py::test_prune_spares_foreign_videos
     cfg = Config(output_dir=str(tmp_path), keep_days=7)
-    old = tmp_path / "old.mp4"
-    fresh = tmp_path / "fresh.mp4"
+    old = tmp_path / "snapreel-20240101-100000.mp4"
+    fresh = tmp_path / "snapreel-20260905-100000.mp4"
     other = tmp_path / "notes.txt"
     for path in (old, fresh, other):
         path.touch()
@@ -82,7 +84,7 @@ def test_prune_removes_only_old_clips(tmp_path):
 
 def test_prune_disabled_by_zero(tmp_path):
     cfg = Config(output_dir=str(tmp_path), keep_days=0)
-    clip = tmp_path / "old.mp4"
+    clip = tmp_path / "snapreel-20240101-100000.mp4"
     clip.touch()
     stale = time.time() - 999 * 86400
     import os

@@ -9,7 +9,7 @@ from pathlib import Path
 from . import clipboard, notify, storage
 from .backends import CaptureError, for_environment
 from .config import Config
-from .encode import MediaInfo, probe, to_gif
+from .encode import EncodeError, MediaInfo, probe, to_gif
 from .platform_info import Environment, detect, enable_dpi_awareness, virtual_desktop
 from .region import Region, clamp, normalize
 from .selector import select_region
@@ -22,6 +22,7 @@ class Result:
     info: MediaInfo | None
     gif: Path | None = None
     clipboard_error: str | None = None
+    gif_error: str | None = None
     user_stopped: bool = False
 
     @property
@@ -88,8 +89,12 @@ def record(
     )
 
     if as_gif:
-        result.gif = to_gif(video_path, video_path.with_suffix(".gif"), config)
-        result.info = probe(result.gif, config) or result.info
+        # GIF — обёртка над уже записанным клипом; её провал не повод терять MP4
+        try:
+            result.gif = to_gif(video_path, video_path.with_suffix(".gif"), config)
+            result.info = probe(result.gif, config) or result.info
+        except EncodeError as exc:
+            result.gif_error = str(exc)
 
     _to_clipboard(result, config, env)
     _announce(result, config, env)

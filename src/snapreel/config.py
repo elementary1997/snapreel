@@ -46,6 +46,9 @@ class Config:
     notify: bool = True
 
     def validate(self) -> None:
+        # тип приходит из TOML или из окружения, поэтому проверяется до сравнений:
+        # иначе строковый fps роняет CLI голым TypeError
+        self._check_types()
         if self.fps < 1 or self.fps > 120:
             raise ValueError("fps должен быть в диапазоне 1..120")
         if self.min_seconds < 0:
@@ -57,10 +60,40 @@ class Config:
         if not 0 <= self.crf <= 51:
             raise ValueError("crf должен быть в диапазоне 0..51")
 
+    def _check_types(self) -> None:
+        for field in fields(self):
+            value = getattr(self, field.name)
+            expected = _EXPECTED_TYPES[field.name]
+            # bool — подкласс int, но «fps = true» осмысленным числом не является
+            if isinstance(value, bool) is not (expected is bool):
+                raise ValueError(
+                    f"{field.name}: ожидается {_TYPE_NAMES[expected]}, получено {value!r}"
+                )
+            allowed: tuple[type, ...] = (int, float) if expected is float else (expected,)
+            if not isinstance(value, allowed):
+                raise ValueError(
+                    f"{field.name}: ожидается {_TYPE_NAMES[expected]}, получено {value!r}"
+                )
+
     def resolved_output_dir(self) -> Path:
         if self.output_dir:
             return Path(self.output_dir).expanduser()
         return default_output_dir()
+
+
+_TYPE_NAMES = {int: "целое число", float: "число", bool: "true или false", str: "строка"}
+
+
+def _expected_types() -> dict[str, type]:
+    """Тип каждого поля берём из значений по умолчанию, а не из аннотаций."""
+    defaults = Config.__dataclass_fields__
+    mapping: dict[str, type] = {}
+    for name, field in defaults.items():
+        mapping[name] = type(field.default)
+    return mapping
+
+
+_EXPECTED_TYPES = _expected_types()
 
 
 def default_output_dir() -> Path:

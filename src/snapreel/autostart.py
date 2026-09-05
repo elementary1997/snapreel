@@ -307,8 +307,15 @@ def launch_agent_path() -> Path:
     return Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT}.plist"
 
 
+def daemon_argv() -> list[str]:
+    """Команда демона: у собранного бинарника нет модуля для `-m`."""
+    if is_frozen():
+        return [sys.executable, "daemon"]
+    return [sys.executable, "-m", "snapreel", "daemon"]
+
+
 def launch_agent_plist() -> str:
-    interpreter = sys.executable
+    arguments = "\n".join(f"        <string>{part}</string>" for part in daemon_argv())
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -318,10 +325,7 @@ def launch_agent_plist() -> str:
     <string>{LAUNCH_AGENT}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{interpreter}</string>
-        <string>-m</string>
-        <string>snapreel</string>
-        <string>daemon</string>
+{arguments}
     </array>
     <key>RunAtLoad</key>
     <true/>

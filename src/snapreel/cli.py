@@ -12,6 +12,7 @@ from . import autostart, deps, storage
 from . import config as config_module
 from . import region as region_module
 from .backends import CaptureError, for_environment
+from .encode import EncodeError
 from .errors import OverlayUnavailable, SelectionCancelled
 from .platform_info import Platform, detect
 from .recorder import record
@@ -76,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         cfg = config_module.load(args.config)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, TypeError) as exc:
         print(f"{PROG}: не прочитать конфиг: {exc}", file=sys.stderr)
         return 2
 
@@ -122,12 +123,9 @@ def _apply_record_flags(cfg, args) -> None:
 
 
 def _record(cfg, args) -> int:
-    _apply_record_flags(cfg, args)
-    region = None
-    if args.region:
-        region = region_module.parse(args.region)
-
     try:
+        _apply_record_flags(cfg, args)
+        region = region_module.parse(args.region) if args.region else None
         result = record(
             cfg,
             region=region,
@@ -140,9 +138,12 @@ def _record(cfg, args) -> int:
     except OverlayUnavailable as exc:
         print(f"{PROG}: {exc}", file=sys.stderr)
         return 2
-    except region_module.RegionError as exc:
+    except (region_module.RegionError, ValueError) as exc:
         print(f"{PROG}: {exc}", file=sys.stderr)
         return 2
+    except EncodeError as exc:
+        print(f"{PROG}: {exc}", file=sys.stderr)
+        return 1
     except CaptureError as exc:
         print(f"{PROG}: {exc}", file=sys.stderr)
         return 1
@@ -156,6 +157,8 @@ def _record(cfg, args) -> int:
         parts.append(info.human_size)
         summary = f"{summary}  ({', '.join(parts)})"
     print(summary)
+    if result.gif_error:
+        print(f"{PROG}: GIF собрать не удалось, в буфере MP4: {result.gif_error}", file=sys.stderr)
     if result.clipboard_error:
         print(f"{PROG}: в буфер положить не удалось: {result.clipboard_error}", file=sys.stderr)
         return 1
