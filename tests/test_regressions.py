@@ -5,10 +5,12 @@ from __future__ import annotations
 import os
 import subprocess
 import time
+from datetime import datetime
 
 import pytest
 
-from snapreel import cli, recorder, storage
+from snapreel import cli, encode, naming, recorder, storage
+from snapreel import config as config_module
 from snapreel.backends.base import Recording
 from snapreel.config import Config
 from snapreel.encode import EncodeError
@@ -76,7 +78,7 @@ def test_prune_follows_a_custom_template(tmp_path):
     ],
 )
 def test_name_pattern_recognizes_only_our_clips(name, expected):
-    assert storage.is_ours(name, Config()) is expected
+    assert naming.is_ours(name, Config().filename_template) is expected
 
 
 # --- сбой GIF не уносит записанный клип ----------------------------------
@@ -177,12 +179,33 @@ def test_stop_writes_q_and_waits(tmp_path):
     assert recording.finished
 
 
+def signal_only(tmp_path) -> Recording:
+    """Процесс в духе wf-recorder: stdin игнорирует, по SIGINT выходит с кодом 7."""
+    process = subprocess.Popen(
+        [
+            "python3",
+            "-c",
+            "import signal, sys, time;"
+            "signal.signal(signal.SIGINT, lambda *a: sys.exit(7));"
+            "print('ready', flush=True);"
+            "time.sleep(30)",
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    # без этого сигнал успевает прийти раньше, чем установлен обработчик,
+    # и процесс умирает с кодом -2 вместо своего 7
+    assert process.stdout.readline().strip() == b"ready"
+    return Recording(process=process, output=tmp_path / "clip.mp4")
+
+
 def test_stop_falls_back_to_signal_for_wf_recorder(tmp_path):
-    recording = sleeper(tmp_path)
+    """Код 7 доказывает, что процесс получил именно SIGINT, а не был убит по таймауту."""
+    recording = signal_only(tmp_path)
     recording.graceful_stop = "sigint"
 
-    recording.stop(timeout=10)
-
+    assert recording.stop(timeout=10) == 7
     assert recording.finished
 
 
@@ -220,3 +243,133 @@ def test_stderr_tail_is_captured(tmp_path):
     recording.wait(timeout=10)
 
     assert "не тот формат" in recording.stderr_tail
+
+
+# --- шаблон имени сужен до проверяемой грамматики ------------------------
+
+
+@pytest.mark.parametrize("template", ["%F", "%s", "%T", "%D", "%R", "%e", "%-d", "%Y/%m"])
+def test_unknown_directive_is_rejected_at_load(template, tmp_path):
+    """Незнакомая директива дала бы выражение, совпадающее с чем угодно."""
+    path = tmp_path / "config.toml"
+    path.write_text(f'filename_template = "{template}"\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="filename_template"):
+        config_module.load(path)
+
+
+@pytest.mark.parametrize("template", ["snapreel-%Y%m%d-%H%M%S", "clip_%Y-%m-%d", "clip", "%j.%Y"])
+def test_supported_templates_round_trip(template, tmp_path):
+    """Что `new_path` создал, то `prune` обязан узнать — иначе keep_days молча мёртв."""
+    cfg = Config(output_dir=str(tmp_path), filename_template=template, keep_days=7)
+    cfg.validate()
+
+    created = storage.new_path(cfg, ".mp4", datetime(2024, 3, 5, 9, 7, 1))
+    created.touch()
+    duplicate = storage.new_path(cfg, ".mp4", datetime(2024, 3, 5, 9, 7, 1))
+    duplicate.touch()
+    for path in (created, duplicate):
+        stale(path)
+
+    assert sorted(storage.prune(cfg)) == sorted([created, duplicate])
+
+
+def test_foreign_names_survive_every_supported_template(tmp_path):
+    cfg = Config(output_dir=str(tmp_path), filename_template="clip_%Y-%m-%d", keep_days=7)
+    foreign = [tmp_path / "wedding-2019.mp4", tmp_path / "cat.gif", tmp_path / "clip_report.mp4"]
+    for path in foreign:
+        path.touch()
+        stale(path)
+
+    assert storage.prune(cfg) == []
+    assert all(path.exists() for path in foreign)
+
+
+def test_path_separators_are_rejected(tmp_path):
+    with pytest.raises(ValueError):
+        Config(filename_template="../../etc/passwd").validate()
+
+
+# --- сборка GIF не выпускает наружу ничего, кроме EncodeError ------------
+
+
+def test_gif_timeout_scales_with_clip_length():
+    """300 секунд не хватало палитре получасовой записи."""
+    assert encode.gif_timeout(Config(max_seconds=60)) > 60
+    assert encode.gif_timeout(Config(max_seconds=1800)) > encode.gif_timeout(Config(max_seconds=60))
+
+
+def test_gif_timeout_becomes_encode_error(monkeypatch, tmp_path):
+    def hang(command, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=command, timeout=kwargs.get("timeout", 1))
+
+    monkeypatch.setattr(encode.subprocess, "run", hang)
+
+    with pytest.raises(EncodeError, match="не уложилась"):
+        encode.to_gif(tmp_path / "in.mp4", tmp_path / "out.gif", Config())
+
+
+def test_missing_ffmpeg_becomes_encode_error(monkeypatch, tmp_path):
+    def missing(command, **kwargs):
+        raise FileNotFoundError("ffmpeg")
+
+    monkeypatch.setattr(encode.subprocess, "run", missing)
+
+    with pytest.raises(EncodeError):
+        encode.to_gif(tmp_path / "in.mp4", tmp_path / "out.gif", Config())
+
+
+def test_hanging_gif_keeps_the_clip(wired, tmp_path, monkeypatch):
+    """Зависший ffmpeg проходит всю настоящую цепочку: to_gif -> EncodeError -> клип цел."""
+    wired()
+
+    def hang(command, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=command, timeout=kwargs.get("timeout", 300))
+
+    monkeypatch.setattr(encode.subprocess, "run", hang)
+
+    result = recorder.record(
+        Config(output_dir=str(tmp_path / "clips"), notify=False),
+        region=Region(0, 0, 100, 100),
+        as_gif=True,
+        indicator=False,
+        env=X11,
+    )
+
+    assert result.video.is_file()
+    assert result.gif is None
+    assert result.payload == result.video
+    assert "не уложилась" in result.gif_error
+    assert wired.copied == [result.video]
+
+
+# --- испорченный хоткей в конфиге не роняет команды ----------------------
+
+
+@pytest.mark.parametrize("command", [["doctor"], ["hotkey", "show"]])
+def test_broken_hotkey_does_not_break_commands(command, tmp_path, capsys):
+    path = tmp_path / "config.toml"
+    path.write_text('hotkey_mp4 = "<ctrl>"\n', encoding="utf-8")
+
+    code = cli.main(["--config", str(path), *command])
+    output = capsys.readouterr()
+
+    assert code in (0, 1)  # doctor вправе сообщить о проблеме, но не упасть
+    assert "Traceback" not in output.err
+    assert "ctrl" in output.out
+
+
+def test_doctor_lists_the_broken_hotkey_as_a_problem(tmp_path, capsys):
+    path = tmp_path / "config.toml"
+    path.write_text('hotkey_gif = "+"\n', encoding="utf-8")
+
+    cli.main(["--config", str(path), "doctor"])
+
+    assert "hotkey_gif" in capsys.readouterr().out
+
+
+def test_daemon_refuses_an_unparsable_hotkey(tmp_path, capsys):
+    code = cli.main(["--config", str(tmp_path / "c.toml"), "daemon", "--hotkey", "<ctrl>"])
+
+    assert code == 2
+    assert "Traceback" not in capsys.readouterr().err

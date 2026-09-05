@@ -31,6 +31,11 @@ class MediaInfo:
         return f"{value:.1f} ГБ"
 
 
+def gif_timeout(config: Config) -> float:
+    """Полминуты на секунду записи: палитра длинного клипа считается долго."""
+    return 60.0 + config.max_seconds * 30.0
+
+
 def to_gif(source: Path, target: Path, config: Config) -> Path:
     """Двухпроходная палитра в одном вызове: без неё GIF получается грязным."""
     # min(...) не даёт растянуть узкую область до gif_max_width
@@ -58,7 +63,16 @@ def to_gif(source: Path, target: Path, config: Config) -> Path:
         "-y",
         str(target),
     ]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+    # наружу из этой функции выходит только EncodeError: выше по стеку уже
+    # лежит записанный клип, и терять его из-за подробностей запуска нельзя
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=gif_timeout(config)
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise EncodeError(f"сборка GIF не уложилась в {exc.timeout:.0f} с") from exc
+    except (subprocess.SubprocessError, OSError) as exc:
+        raise EncodeError(f"не запустить {config.ffmpeg}: {exc}") from exc
     if result.returncode != 0 or not target.is_file():
         raise EncodeError(f"не собрать GIF: {result.stderr.strip()[:500]}")
     return target

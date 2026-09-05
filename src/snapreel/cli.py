@@ -293,8 +293,8 @@ def _hotkey(cfg, args) -> int:
     env = detect()
 
     if action == "show":
-        print(f"MP4: {autostart.describe(cfg.hotkey_mp4)}   ({cfg.hotkey_mp4})")
-        print(f"GIF: {autostart.describe(cfg.hotkey_gif)}   ({cfg.hotkey_gif})")
+        print(f"MP4: {autostart.describe_safe(cfg.hotkey_mp4)}   ({cfg.hotkey_mp4})")
+        print(f"GIF: {autostart.describe_safe(cfg.hotkey_gif)}   ({cfg.hotkey_gif})")
         print(f"команда: {autostart.quote(autostart.launch_argv())}")
         return 0
 
@@ -360,10 +360,17 @@ def _autostart(args) -> int:
 def _daemon(cfg, args) -> int:
     from .hotkeys import HotkeyError, run
 
-    if args.hotkey:
-        cfg.hotkey_mp4 = autostart.to_pynput(args.hotkey)
-    if args.hotkey_gif:
-        cfg.hotkey_gif = autostart.to_pynput(args.hotkey_gif)
+    try:
+        if args.hotkey:
+            cfg.hotkey_mp4 = autostart.to_pynput(args.hotkey)
+        if args.hotkey_gif:
+            cfg.hotkey_gif = autostart.to_pynput(args.hotkey_gif)
+        # значения могли прийти и из конфига — демон без разбираемых комбинаций не поднимется
+        autostart.validate(cfg.hotkey_mp4)
+        autostart.validate(cfg.hotkey_gif)
+    except autostart.HotkeySetupError as exc:
+        print(f"{PROG}: {exc}", file=sys.stderr)
+        return 2
 
     def handler(as_gif: bool) -> None:
         try:
@@ -384,9 +391,14 @@ def _doctor(cfg) -> int:
     print(f"платформа:      {env.platform.value}{' (WSL)' if env.is_wsl else ''}")
     print(f"каталог клипов: {cfg.resolved_output_dir()}")
     print(f"конфиг:         {config_module.config_path()}")
-    print(f"хоткей MP4:     {autostart.describe(cfg.hotkey_mp4)}")
+    print(f"хоткей MP4:     {autostart.describe_safe(cfg.hotkey_mp4)}")
 
     problems: list[str] = []
+    for label, spec in (("hotkey_mp4", cfg.hotkey_mp4), ("hotkey_gif", cfg.hotkey_gif)):
+        try:
+            autostart.validate(spec)
+        except autostart.HotkeySetupError as exc:
+            problems.append(f"{label} в конфиге испорчен: {exc}")
     if env.is_wsl:
         problems.append(
             "запуск внутри WSL: виден только экран WSLg. Ставьте snapreel на хост Windows."

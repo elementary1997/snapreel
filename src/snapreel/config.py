@@ -9,6 +9,8 @@ from pathlib import Path
 
 import tomllib
 
+from . import naming
+
 APP_NAME = "snapreel"
 
 
@@ -59,6 +61,7 @@ class Config:
             raise ValueError("min_seconds больше max_seconds")
         if not 0 <= self.crf <= 51:
             raise ValueError("crf должен быть в диапазоне 0..51")
+        naming.validate(self.filename_template)
 
     def _check_types(self) -> None:
         for field in fields(self):

@@ -101,6 +101,14 @@ def describe(spec: str) -> str:
     return "+".join([*(names[m] for m in modifiers), key.upper() if len(key) == 1 else key])
 
 
+def describe_safe(spec: str) -> str:
+    """`describe` для диагностики: испорченное значение показывается, а не роняет команду."""
+    try:
+        return describe(spec)
+    except HotkeySetupError:
+        return f"{spec!r} — не разобрать"
+
+
 def validate(spec: str) -> None:
     """Комбинация без модификатора перехватит обычную печать — так нельзя."""
     modifiers, key = parse_hotkey(spec)
