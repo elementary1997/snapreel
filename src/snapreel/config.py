@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import os
 import platform
+import tomllib
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
-
-import tomllib
 
 from . import naming
 

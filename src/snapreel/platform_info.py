@@ -7,12 +7,12 @@ import platform
 import shutil
 import subprocess
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from .region import Region
 
 
-class Platform(str, Enum):
+class Platform(StrEnum):
     WINDOWS = "windows"
     MACOS = "macos"
     LINUX_X11 = "linux-x11"

@@ -20,12 +20,12 @@ $venv = if ($env:SNAPREEL_VENV) { $env:SNAPREEL_VENV } else { Join-Path $root '.
 
 $python = Get-Command python -ErrorAction SilentlyContinue
 if (-not $python) {
-    throw 'нужен Python 3.10+ в PATH — поставьте: winget install Python.Python.3.12'
+    throw 'нужен Python 3.11+ в PATH — поставьте: winget install Python.Python.3.12'
 }
 
-$versionOk = & python -c 'import sys; print(1 if sys.version_info >= (3, 10) else 0)'
+$versionOk = & python -c 'import sys; print(1 if sys.version_info >= (3, 11) else 0)'
 if ($versionOk -ne '1') {
-    throw "нужен Python 3.10 или новее, найден: $(& python --version)"
+    throw "нужен Python 3.11 или новее, найден: $(& python --version)"
 }
 
 Write-Host "== окружение: $venv"

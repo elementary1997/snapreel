@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import pathlib
 import subprocess
+import sys
 import time
 from datetime import datetime
 
@@ -164,7 +165,7 @@ def test_launch_agent_uses_module_when_installed(monkeypatch):
 def sleeper(tmp_path) -> Recording:
     """Настоящий процесс, читающий stdin, — как ffmpeg, ждущий букву `q`."""
     process = subprocess.Popen(
-        ["python3", "-c", "import sys; sys.stdin.read(1); sys.exit(0)"],
+        [sys.executable, "-c", "import sys; sys.stdin.read(1); sys.exit(0)"],
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
@@ -184,7 +185,7 @@ def signal_only(tmp_path) -> Recording:
     """Процесс в духе wf-recorder: stdin игнорирует, по SIGINT выходит с кодом 7."""
     process = subprocess.Popen(
         [
-            "python3",
+            sys.executable,
             "-c",
             "import signal, sys, time;"
             "signal.signal(signal.SIGINT, lambda *a: sys.exit(7));"
@@ -201,6 +202,10 @@ def signal_only(tmp_path) -> Recording:
     return Recording(process=process, output=tmp_path / "clip.mp4")
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="ветка SIGINT нужна только wf-recorder, а он существует лишь в Linux",
+)
 def test_stop_falls_back_to_signal_for_wf_recorder(tmp_path):
     """Код 7 доказывает, что процесс получил именно SIGINT, а не был убит по таймауту."""
     recording = signal_only(tmp_path)
@@ -220,7 +225,7 @@ def test_stop_is_idempotent(tmp_path):
 
 def test_kill_ends_a_process_that_ignores_the_letter(tmp_path):
     process = subprocess.Popen(
-        ["python3", "-c", "import time; time.sleep(30)"],
+        [sys.executable, "-c", "import time; time.sleep(30)"],
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
@@ -234,7 +239,12 @@ def test_kill_ends_a_process_that_ignores_the_letter(tmp_path):
 
 def test_stderr_tail_is_captured(tmp_path):
     process = subprocess.Popen(
-        ["python3", "-c", "import sys; sys.stderr.write('ffmpeg: не тот формат\\n'); sys.exit(1)"],
+        # только ASCII: кодировка командной строки в Windows исказит кириллицу
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.stderr.write('ffmpeg: bad format\\n'); sys.exit(1)",
+        ],
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
@@ -243,7 +253,7 @@ def test_stderr_tail_is_captured(tmp_path):
 
     recording.wait(timeout=10)
 
-    assert "не тот формат" in recording.stderr_tail
+    assert "bad format" in recording.stderr_tail
 
 
 # --- шаблон имени сужен до проверяемой грамматики ------------------------

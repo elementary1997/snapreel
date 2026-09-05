@@ -7,7 +7,7 @@ name = "snapreel"
 version = "0.1.0"
 description = "Запись видео выделенной области экрана по хоткею с копированием файла в буфер обмена"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = []
 
@@ -27,7 +27,7 @@ pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 # E,F — базовые ошибки; I — порядок импортов; UP — современный синтаксис;

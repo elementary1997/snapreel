@@ -15,9 +15,9 @@ if ! command -v "$python" >/dev/null 2>&1; then
     exit 1
 fi
 
-version_ok=$("$python" -c 'import sys; print(1 if sys.version_info >= (3, 10) else 0)')
+version_ok=$("$python" -c 'import sys; print(1 if sys.version_info >= (3, 11) else 0)')
 if [ "$version_ok" != "1" ]; then
-    echo "нужен Python 3.10 или новее, найден: $("$python" --version)" >&2
+    echo "нужен Python 3.11 или новее, найден: $("$python" --version)" >&2
     exit 1
 fi
 

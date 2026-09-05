@@ -5,7 +5,6 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
-from urllib.parse import quote
 
 
 class ClipboardError(RuntimeError):
@@ -13,7 +12,8 @@ class ClipboardError(RuntimeError):
 
 
 def file_uri(path: Path) -> str:
-    return "file://" + quote(str(Path(path).resolve()))
+    """`as_uri` сам делает percent-encoding и правильно оформляет диск в Windows."""
+    return Path(path).resolve().as_uri()
 
 
 # --- macOS ---------------------------------------------------------------
