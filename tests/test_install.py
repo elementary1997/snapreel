@@ -144,7 +144,7 @@ def test_uninstalling_nothing_is_not_a_failure(frozen, monkeypatch):
 # --- первый запуск --------------------------------------------------------
 
 
-def test_a_downloaded_binary_offers_to_install_itself(monkeypatch, tmp_path):
+def test_a_double_click_offers_to_install_first(monkeypatch, tmp_path):
     """Скачанный exe сначала предлагает поставить себя, а потом уже живёт."""
     asked = []
     monkeypatch.setattr(install, "supported", lambda: True)
@@ -152,9 +152,26 @@ def test_a_downloaded_binary_offers_to_install_itself(monkeypatch, tmp_path):
         install, "plan", lambda env=None: install.Plan(tmp_path / "a", tmp_path / "b", False)
     )
     monkeypatch.setattr(cli, "_offer_install", lambda cfg: asked.append(True) or True)
+    monkeypatch.setattr("snapreel.tray.run", lambda config, path=None, env=None: 0)
+
+    assert cli.main(["--config", str(tmp_path / "c.toml")]) == 0
+    assert asked  # окно показали, установленная копия поднялась сама
+
+
+def test_an_explicit_tray_never_asks_about_installing(monkeypatch, tmp_path):
+    """`snapreel tray` — это то, что стоит в автозапуске: оттуда ждут иконку.
+
+    Окно установки на этом пути значило бы окно вместо иконки при каждом
+    входе в систему у того, кто ставить отказался.
+    """
+    monkeypatch.setattr(install, "supported", lambda: True)
+    monkeypatch.setattr(
+        install, "plan", lambda env=None: install.Plan(tmp_path / "a", tmp_path / "b", False)
+    )
+    monkeypatch.setattr(cli, "_offer_install", lambda cfg: pytest.fail("окно вместо иконки"))
+    monkeypatch.setattr("snapreel.tray.run", lambda config, path=None, env=None: 0)
 
     assert cli.main(["--config", str(tmp_path / "c.toml"), "tray"]) == 0
-    assert asked  # окно показали, установленная копия поднялась сама
 
 
 def test_an_installed_binary_goes_straight_to_the_tray(monkeypatch, tmp_path):
@@ -165,7 +182,19 @@ def test_an_installed_binary_goes_straight_to_the_tray(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "_offer_install", lambda cfg: pytest.fail("уже установлен"))
     monkeypatch.setattr("snapreel.tray.run", lambda config, path=None, env=None: 0)
 
-    assert cli.main(["--config", str(tmp_path / "c.toml"), "tray"]) == 0
+    assert cli.main(["--config", str(tmp_path / "c.toml")]) == 0
+
+
+def test_macos_does_not_start_a_second_copy(frozen, monkeypatch):
+    """`launchctl load` поднимает агент сам — вторая копия дралась бы за хоткеи."""
+    spawned = []
+    monkeypatch.setattr(install.subprocess, "Popen", lambda argv, **kwargs: spawned.append(argv))
+
+    assert install.launch(install.target_path(MACOS), MACOS, autostarted=True)
+    assert spawned == []
+
+    assert install.launch(install.target_path(MACOS), MACOS, autostarted=False)
+    assert spawned  # без автозапуска поднимать копию всё-таки нам
 
 
 def test_removing_itself_is_left_to_a_process_that_outlives_us(frozen, monkeypatch):

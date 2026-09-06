@@ -84,7 +84,12 @@ def test_modifier_keys_are_told_from_ordinary_ones(keysym, modifier):
 def test_a_bare_launch_raises_the_tray(tmp_path, monkeypatch):
     """Двойной щелчок по бинарнику — это иконка в трее, а не запись сразу."""
     raised = []
-    monkeypatch.setattr(cli, "_tray", lambda cfg, path: raised.append(path) or 0)
+
+    def stub(cfg, path, offer_install=False):
+        raised.append(path)
+        return 0
+
+    monkeypatch.setattr(cli, "_tray", stub)
     monkeypatch.setattr(cli, "_record", lambda cfg, args: pytest.fail("вместо трея записал"))
     monkeypatch.setattr(cli, "_settings", lambda cfg, path: pytest.fail("вместо трея открыл окно"))
 
@@ -97,7 +102,7 @@ def test_a_bare_launch_raises_the_tray_with_a_config_too(tmp_path, monkeypatch):
     path = tmp_path / "config.toml"
     config_module.save(Config(), path)
     monkeypatch.setattr(cli, "_record", lambda cfg, args: pytest.fail("вместо трея записал"))
-    monkeypatch.setattr(cli, "_tray", lambda cfg, p: 0)
+    monkeypatch.setattr(cli, "_tray", lambda cfg, p, offer_install=False: 0)
 
     assert cli.main(["--config", str(path)]) == 0
 

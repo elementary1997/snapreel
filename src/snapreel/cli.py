@@ -158,7 +158,9 @@ def main(argv: list[str] | None = None) -> int:
         print(outcome.message)
         return 0 if outcome.ok else 1
     if command == "tray":
-        return _tray(cfg, args.config)
+        # установку предлагает только голый запуск: явный `tray` — это то,
+        # что стоит в автозапуске, и оттуда человек ждёт иконку, а не окно
+        return _tray(cfg, args.config, offer_install=bare)
     if command == "daemon":
         return _daemon(cfg, args)
     return _record(cfg, args)
@@ -507,7 +509,7 @@ def _install() -> int:
     print(outcome.message)
     if not outcome.ok:
         return 1
-    if not install_module.launch(install_module.target_path()):
+    if not install_module.launch(install_module.target_path(), autostarted=True):
         print(f"{PROG}: установленную копию не запустить — запустите её сами", file=sys.stderr)
     return 0
 
@@ -530,12 +532,12 @@ def _offer_install(cfg: Config) -> bool:
         return False
 
 
-def _tray(cfg: Config, path: Path | None) -> int:
+def _tray(cfg: Config, path: Path | None, offer_install: bool = False) -> int:
     """Резидент с иконкой; без pystray объясняет, чем его заменить."""
     from .errors import TrayUnavailable
     from .tray import run as run_tray
 
-    if install_module.supported() and not install_module.plan().installed:
+    if offer_install and install_module.supported() and not install_module.plan().installed:
         # установленная копия запускается сама и остаётся жить; этой уже
         # ничего делать не нужно
         if _offer_install(cfg):

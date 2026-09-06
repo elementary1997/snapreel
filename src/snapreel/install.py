@@ -150,8 +150,16 @@ def _remove_after_exit(target: Path, env: Environment) -> None:
         pass  # не вышло — файл останется лежать, но это не отказ удаления
 
 
-def launch(target: Path) -> bool:
-    """Поднимает установленную копию и говорит, вышло ли."""
+def launch(target: Path, env: Environment | None = None, autostarted: bool = False) -> bool:
+    """Поднимает установленную копию и говорит, вышло ли.
+
+    На macOS с только что прописанным LaunchAgent поднимать нечего:
+    `launchctl load` запускает его сам (RunAtLoad), и вторая копия просто
+    подралась бы с первой за горячие клавиши.
+    """
+    env = env or detect()
+    if autostarted and env.platform is Platform.MACOS:
+        return True
     try:
         subprocess.Popen([str(target), "tray"], stdin=subprocess.DEVNULL)
     except OSError:

@@ -116,13 +116,14 @@ class InstallWindow:
         self.status.configure(text="Устанавливаю…", foreground=self.palette.muted)
         self.root.update_idletasks()
 
-        outcome = install.install(with_autostart=self.autostart.variable.get())
+        with_autostart = bool(self.autostart.variable.get())
+        outcome = install.install(with_autostart=with_autostart)
         if not outcome.ok:
             self.status.configure(text=outcome.message, foreground=self.palette.danger)
             self.button.configure(state="normal")
             return
 
-        self.installed = install.launch(self.plan.target)
+        self.installed = install.launch(self.plan.target, autostarted=with_autostart)
         if not self.installed:
             # поставили, но поднять не смогли: пусть человек запустит сам,
             # а не гадает, почему иконки нет

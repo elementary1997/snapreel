@@ -527,7 +527,12 @@ def test_a_path_with_undecodable_bytes_still_prints(monkeypatch):
 def test_bare_invocation_raises_the_tray(tmp_path, monkeypatch, capsys):
     """Двойной щелчок по бинарнику зовёт snapreel без единого аргумента."""
     raised = []
-    monkeypatch.setattr(cli, "_tray", lambda cfg, path: raised.append(path) or 0)
+
+    def stub(cfg, path, offer_install=False):
+        raised.append(path)
+        return 0
+
+    monkeypatch.setattr(cli, "_tray", stub)
     config = tmp_path / "config.toml"
     config.write_text("notify = false\n", encoding="utf-8")
 
@@ -545,7 +550,12 @@ def test_bare_invocation_reads_argv_when_none_is_given(tmp_path, monkeypatch):
     подкоманды; строкой её не подставить.
     """
     raised = []
-    monkeypatch.setattr(cli, "_tray", lambda cfg, path: raised.append(path) or 0)
+
+    def stub(cfg, path, offer_install=False):
+        raised.append(path)
+        return 0
+
+    monkeypatch.setattr(cli, "_tray", stub)
     config = tmp_path / "config.toml"
     config.write_text("notify = false\n", encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["snapreel", "--config", str(config)])
