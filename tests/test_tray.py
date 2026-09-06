@@ -324,7 +324,15 @@ def test_a_failed_install_keeps_the_update_offered(tray_app, monkeypatch):
 # --- pystray --------------------------------------------------------------
 
 
+@pytest.mark.gui
 def test_the_menu_translates_to_pystray(tray_app, need):
+    """Единственная проверка перевода меню в pystray.
+
+    Маркер `gui` не про окно, а про дисплей: без него pystray не импортируется
+    вовсе. В обычном прогоне тест скипался бы молча и не выполнялся ни в одном
+    job CI — а под `xvfb-run pytest -m gui` его гоняет тот же job, что и
+    докинг иконки.
+    """
     need("pystray")
     menu = tray.build_menu(tray_app.app)
     labels = [str(entry.text) for entry in menu.items if entry.text]

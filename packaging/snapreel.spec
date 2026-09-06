@@ -9,6 +9,7 @@
 
 import os
 import sys
+from importlib.util import find_spec
 
 block_cipher = None
 
@@ -25,23 +26,30 @@ hidden = [
     "tkinter",
 ]
 
-# pynput нужен хоткеям трея и команде daemon; если его нет в окружении
-# сборки, бинарник всё равно должен собраться
-try:
-    import pynput  # noqa: F401
+# pynput нужен хоткеям трея и команде daemon, pystray с Pillow — самой иконке.
+# Наличие проверяется find_spec, а не импортом: на сборочном раннере дисплея
+# нет, и оба модуля там падают на подключении к X-серверу — pynput своим
+# ImportError, pystray ошибкой Xlib. Импорт сказал бы «модуля нет», хотя он
+# есть, и собрался бы бинарник без хоткеев и без трея. Если модуля правда нет,
+# бинарник всё равно должен собраться — без этих возможностей.
+# Бэкенды обе библиотеки выбирают в рантайме по платформе, поэтому граф
+# импортов их не видит: с одним лишь "pynput" в бинарнике оказывается пакет,
+# который на первом же обращении говорит «this platform is not supported».
+# Берётся набор той платформы, на которой идёт сборка, — релиз собирается на
+# каждой отдельно.
+_PYNPUT = {
+    "win32": ["pynput.keyboard._win32", "pynput.mouse._win32", "pynput._util.win32"],
+    "darwin": ["pynput.keyboard._darwin", "pynput.mouse._darwin", "pynput._util.darwin"],
+}.get(sys.platform, ["pynput.keyboard._xorg", "pynput.mouse._xorg", "pynput._util.xorg"])
+_PYSTRAY = {
+    "win32": ["pystray._win32"],
+    "darwin": ["pystray._darwin"],
+}.get(sys.platform, ["pystray._xorg"])
 
-    hidden.append("pynput")
-except ImportError:
-    pass
-
-# то же для иконки в трее: без pystray собирается бинарник без трея, и это
-# честнее, чем упасть на сборке
-try:
-    import pystray  # noqa: F401
-
-    hidden += ["pystray", "PIL", "PIL.Image", "PIL.ImageDraw"]
-except ImportError:
-    pass
+if find_spec("pynput"):
+    hidden += ["pynput", "pynput.keyboard", "pynput.mouse", *_PYNPUT]
+if find_spec("pystray"):
+    hidden += ["pystray", *_PYSTRAY, "PIL", "PIL.Image", "PIL.ImageDraw"]
 
 binaries = []
 _bundled_ffmpeg = os.environ.get("SNAPREEL_BUNDLE_FFMPEG")

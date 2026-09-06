@@ -131,6 +131,9 @@ jobs:
           if ! grep -qE '^pystray +есть' doctor.txt; then
             echo "в бинарник не попал pystray — иконки в трее не будет"; exit 1
           fi
+          if ! grep -qE '^pynput +есть' doctor.txt; then
+            echo "в бинарник не попал pynput — трей не услышит хоткеи"; exit 1
+          fi
 
       - name: Record a clip with the bundled ffmpeg
         if: runner.os == 'Linux'
@@ -143,6 +146,37 @@ jobs:
             ./dist/snapreel record --region 640x480+0+0 --seconds 2 --min-seconds 0 \
               --no-indicator --output-dir "$RUNNER_TEMP/clips" || true
           test -s "$RUNNER_TEMP"/clips/*.mp4
+
+      - name: Raise the tray icon on a virtual screen
+        if: runner.os == 'Linux'
+        env:
+          XDG_SESSION_TYPE: x11
+        run: |
+          # «pystray есть» в doctor значит лишь, что модуль внутри: бэкенды обе
+          # библиотеки выбирают в рантайме, и без них трей поднимается немым —
+          # иконки нет, хоткеи не слушаются. Видно это только на живом экране,
+          # поэтому здесь трей запускается по-настоящему.
+          set +e
+          xvfb-run --server-args="-screen 0 1280x720x24" \
+            timeout 20 ./dist/snapreel tray > tray.log 2>&1
+          code=$?
+          set -e
+          cat tray.log
+
+          # 124 — трея дождался timeout, то есть процесс жил и работал.
+          # Собственных трейсбеков pystray пишет в лог сколько угодно: у Xvfb
+          # нет менеджера трея, докинг тут и не должен удаваться
+          if [ "$code" != "124" ]; then
+            echo "трей вышел сам с кодом $code, а должен был работать"; exit 1
+          fi
+          if grep -q "горячие клавиши не слушаем" tray.log; then
+            echo "в бинарнике нет рабочего pynput — трей не услышит хоткеи"; exit 1
+          fi
+          # а про отсутствующий трей он обязан сказать: значит дошёл до цикла
+          # событий и проверил, встала ли иконка
+          if ! grep -q "иконка не появилась" tray.log; then
+            echo "трей не доложил, что системного трея в сессии нет"; exit 1
+          fi
 
       - name: Rename
         shell: bash
