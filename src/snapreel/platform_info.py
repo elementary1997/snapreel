@@ -127,7 +127,7 @@ def attach_console() -> None:
     """
     if detect().platform is not Platform.WINDOWS:
         return
-    if sys.stdout is not None and sys.stderr is not None:
+    if sys.stdout is not None and sys.stderr is not None and sys.stdin is not None:
         return  # консольная сборка: потоки на месте
 
     import ctypes
@@ -146,6 +146,14 @@ def attach_console() -> None:
             setattr(sys, name, open(target, "w", encoding="utf-8", errors="replace"))
         except OSError:
             setattr(sys, name, open(os.devnull, "w", encoding="utf-8", errors="replace"))
+
+    # ввод чинится так же: без него `input` в `hotkey set` и `setup` падает
+    # на `sys.stdin = None`, а спросить человека всё равно было бы нечем
+    if sys.stdin is None:
+        try:
+            sys.stdin = open("CONIN$" if attached else os.devnull, encoding="utf-8")
+        except OSError:
+            sys.stdin = open(os.devnull, encoding="utf-8")
 
 
 def machine() -> str:

@@ -25,7 +25,11 @@ from .errors import OverlayUnavailable
 from .platform_info import Platform, detect, enable_dpi_awareness
 
 PAD = 8
-LABEL_WIDTH = 21
+LABEL_WIDTH = 24
+# Ширина колонки с полями — в пикселях и одна на все поля: разъехавшиеся по
+# ширине поля и есть то, из-за чего форма выглядит кривой.
+CONTROL_WIDTH = 250
+HINT_WRAP = 330
 UPDATE_GROUP = "Обновление"
 
 
@@ -363,7 +367,10 @@ class SettingsWindow:
         values = settings.values_of(self.config)
         for index, group in enumerate(settings.GROUPS):
             page = ttk.Frame(inner, style="Card.TFrame")
-            page.columnconfigure(1, weight=1)
+            # поля не растягиваются по ширине карточки: колонка полей одна и
+            # та же у всех строк, а лишнее место забирает пустая колонка
+            page.columnconfigure(1, minsize=CONTROL_WIDTH)
+            page.columnconfigure(2, weight=1)
             self._pages[group.title] = page
             for row, field in enumerate(group.fields):
                 self._add_field(page, row, field, values[field.name])
@@ -410,6 +417,7 @@ class SettingsWindow:
         ttk.Label(page, text=field.label, style="Card.TLabel", width=LABEL_WIDTH, anchor="w").grid(
             row=line, column=0, sticky="w", pady=(0, 1), padx=(0, PAD)
         )
+        page.rowconfigure(line, minsize=26)  # одинаковая высота строки у всех полей
 
         if field.kind == "hotkey":
             widget = _HotkeyEntry(page, str(value), self.fonts["mono"], self.palette)
@@ -418,11 +426,7 @@ class SettingsWindow:
         elif field.kind == "choice":
             variable = tk.StringVar(value=str(value))
             widget = ttk.Combobox(
-                page,
-                textvariable=variable,
-                values=list(field.choices),
-                state="readonly",
-                width=16,
+                page, textvariable=variable, values=list(field.choices), state="readonly"
             )
             widget.variable = variable
         elif field.kind == "dir":
@@ -432,15 +436,14 @@ class SettingsWindow:
             widget = ttk.Entry(page, textvariable=variable)
             widget.variable = variable
 
-        sticky = "w" if field.kind in ("bool", "choice") else "we"
-        widget.grid(row=line, column=1, sticky=sticky, pady=(0, 1))
+        widget.grid(row=line, column=1, sticky="w" if field.kind == "bool" else "we", pady=(0, 1))
         self._widgets[field.name] = widget
 
-        # Подсказка живёт под полем и там же показывается ошибка. Пустую
-        # строку не резервируем: полей три десятка, и пустые полосы между
-        # ними — это ещё один экран прокрутки на ровном месте.
-        note = ttk.Label(page, text=field.hint, style="Hint.TLabel", wraplength=330)
-        note.grid(row=line + 1, column=1, sticky="w", pady=(0, PAD if field.hint else PAD // 2))
+        # Подсказка живёт под полем, там же показывается ошибка. Строка под
+        # неё есть всегда, даже пустая: иначе соседние поля стоят с разным
+        # шагом и форма выглядит косой.
+        note = ttk.Label(page, text=field.hint or " ", style="Hint.TLabel", wraplength=HINT_WRAP)
+        note.grid(row=line + 1, column=1, columnspan=2, sticky="w", pady=(0, PAD))
         self._errors[field.name] = note
 
     # --- сохранение ------------------------------------------------------
@@ -489,7 +492,7 @@ class SettingsWindow:
             if field.name in errors:
                 note.configure(text=errors[field.name], style="Error.TLabel")
             else:
-                note.configure(text=field.hint, style="Hint.TLabel")
+                note.configure(text=field.hint or " ", style="Hint.TLabel")
 
 
 def _first_group_with(errors: dict[str, str]) -> str:

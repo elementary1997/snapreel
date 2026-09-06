@@ -10,6 +10,7 @@ from pathlib import Path
 
 from . import autostart, deps, storage, updates
 from . import config as config_module
+from . import install as install_module
 from . import region as region_module
 from .backends import CaptureError, for_environment
 from .config import Config
@@ -81,6 +82,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("tray", help="иконка в трее: запись, настройки и обновления")
 
+    sub.add_parser("install", help="положить бинарник на место и поднимать при входе")
+    sub.add_parser("uninstall", help="убрать установленную копию и автозапуск")
+
     daemon = sub.add_parser("daemon", help="висеть в фоне и слушать глобальный хоткей")
     daemon.add_argument("--hotkey", help="комбинация для MP4 (по умолчанию из конфига)")
     daemon.add_argument("--hotkey-gif", help="комбинация для GIF")
@@ -147,6 +151,12 @@ def main(argv: list[str] | None = None) -> int:
         removed = storage.prune(cfg)
         print(f"удалено файлов: {len(removed)}")
         return 0
+    if command == "install":
+        return _install()
+    if command == "uninstall":
+        outcome = install_module.uninstall()
+        print(outcome.message)
+        return 0 if outcome.ok else 1
     if command == "tray":
         return _tray(cfg, args.config)
     if command == "daemon":
@@ -287,7 +297,19 @@ def _record(cfg, args) -> int:
 
 
 def _interactive() -> bool:
-    return sys.stdin.isatty() and sys.stdout.isatty()
+    """Есть ли кого спрашивать.
+
+    Потока может не быть вовсе — у оконной сборки Windows их нет, пока она не
+    подключится к чужой консоли, — и «спросить некого» это тоже ответ, а не
+    повод падать на `None.isatty()`.
+    """
+    for stream in (sys.stdin, sys.stdout):
+        try:
+            if not stream.isatty():
+                return False
+        except (AttributeError, ValueError, OSError):
+            return False
+    return True
 
 
 def _confirm(question: str, assume_yes: bool) -> bool:
@@ -480,10 +502,44 @@ def _autostart(args) -> int:
 # --- трей, демон и диагностика --------------------------------------------
 
 
+def _install() -> int:
+    outcome = install_module.install()
+    print(outcome.message)
+    if not outcome.ok:
+        return 1
+    if not install_module.launch(install_module.target_path()):
+        print(f"{PROG}: установленную копию не запустить — запустите её сами", file=sys.stderr)
+    return 0
+
+
+def _offer_install(cfg: Config) -> bool:
+    """Спрашивает про установку. True — поставили и подняли новую копию.
+
+    Спрашивается только у скачанного бинарника, который ещё лежит не на
+    месте: пока он в «Загрузках», автозапуск ссылается на файл, который
+    уберут первой же уборкой папки.
+    """
+    try:
+        from .install_ui import ask_install
+    except ImportError:  # без tkinter ставят командой
+        return False
+    try:
+        return ask_install(cfg)
+    except OverlayUnavailable as exc:
+        print(f"{PROG}: {exc}", file=sys.stderr)
+        return False
+
+
 def _tray(cfg: Config, path: Path | None) -> int:
     """Резидент с иконкой; без pystray объясняет, чем его заменить."""
     from .errors import TrayUnavailable
     from .tray import run as run_tray
+
+    if install_module.supported() and not install_module.plan().installed:
+        # установленная копия запускается сама и остаётся жить; этой уже
+        # ничего делать не нужно
+        if _offer_install(cfg):
+            return 0
 
     try:
         return run_tray(cfg, path)

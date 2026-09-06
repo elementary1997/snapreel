@@ -153,6 +153,12 @@ def apply(root, palette: Palette = LIGHT) -> dict[str, tkfont.Font]:
         "Title.TLabel", background=palette.bg, foreground=palette.text, font=fonts["title"]
     )
     style.configure(
+        "CardTitle.TLabel",
+        background=palette.surface,
+        foreground=palette.text,
+        font=fonts["title"],
+    )
+    style.configure(
         "Status.TLabel", background=palette.bg, foreground=palette.muted, font=fonts["hint"]
     )
     style.configure(
@@ -195,7 +201,18 @@ def apply(root, palette: Palette = LIGHT) -> dict[str, tkfont.Font]:
         selectforeground=palette.text,
         padding=3,
     )
-    style.map("TCombobox", bordercolor=[("focus", palette.accent)])
+    # `clam` держит для readonly свою карту цветов, и без перекрытия поле
+    # выбора остаётся светло-бежевым — в тёмной теме на нём не прочитать текст
+    style.map(
+        "TCombobox",
+        bordercolor=[("focus", palette.accent)],
+        fieldbackground=[("readonly", palette.field), ("disabled", palette.bg)],
+        foreground=[("readonly", palette.text), ("disabled", palette.muted)],
+        background=[("readonly", palette.button), ("active", palette.button_hover)],
+        selectbackground=[("readonly", palette.field)],
+        selectforeground=[("readonly", palette.text)],
+        arrowcolor=[("readonly", palette.muted)],
+    )
     # выпадающий список у комбобокса — не ttk-виджет, красится опциями Tk
     root.option_add("*TCombobox*Listbox.background", palette.field)
     root.option_add("*TCombobox*Listbox.foreground", palette.text)

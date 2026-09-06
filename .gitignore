@@ -27,3 +27,8 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# мусор от локальных прогонов релизных проверок
+doctor.txt
+smoke-config.toml
+tray.log
