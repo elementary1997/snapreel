@@ -64,15 +64,18 @@ def test_unknown_manager_is_an_error():
 
 
 def test_missing_reports_absent_tools(monkeypatch):
+    """Список считается от машины, поэтому в тесте машина подменяется целиком."""
     monkeypatch.setattr(deps.shutil, "which", lambda name: None)
     monkeypatch.setattr(deps, "find_spec", lambda name: None)
+    monkeypatch.setattr(deps, "_library_present", lambda name: False)
     absent = {item.key for item in deps.missing(Config(), X11)}
-    assert absent == {"ffmpeg", "tkinter", "xclip", "notify-send"}
+    assert absent == {"ffmpeg", "tkinter", "libxcb-cursor", "xclip", "notify-send"}
 
 
 def test_missing_is_empty_when_everything_is_present(monkeypatch):
     monkeypatch.setattr(deps.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(deps, "find_spec", lambda name: object())
+    monkeypatch.setattr(deps, "_library_present", lambda name: True)
     assert deps.missing(Config(), X11) == []
 
 
