@@ -111,7 +111,8 @@ fetch() {
     got="$(sha256_of "$work/$archive.part")"
     if [ "$got" != "$want" ]; then
         echo "$archive: ожидалась сумма $want, получена $got" >&2
-        echo "скачано не то, что нужно — у зеркала вместо архива бывает html" >&2
+        echo "скачано не то, что нужно — у зеркала вместо архива бывает html." >&2
+        echo "если версию меняли намеренно, обновите и FFMPEG_SHA256" >&2
         exit 1
     fi
     mv "$work/$archive.part" "$work/$archive"
@@ -123,9 +124,17 @@ echo "== x264 $X264_VERSION"
 # первого релиза 0.2.0. Клон отдаёт именно названный коммит и проверяет себя сам.
 if [ ! -d "$work/x264/.git" ]; then
     rm -rf "$work/x264"
-    git clone --quiet https://code.videolan.org/videolan/x264.git "$work/x264"
+    # autocrlf задаётся прямо здесь: под msys2 клон с чужой настройкой отдал бы
+    # configure с CRLF, а он от этого ломается непонятными сообщениями
+    git clone --quiet --config core.autocrlf=false \
+        https://code.videolan.org/videolan/x264.git "$work/x264"
 fi
-git -C "$work/x264" fetch --quiet origin
+# В сеть идём, только если нужного коммита в клоне нет. Безусловный fetch
+# сделал бы повторную сборку зависимой ровно от той доступности videolan,
+# ради ухода от которой архив и заменён клоном.
+if ! git -C "$work/x264" cat-file -e "$X264_VERSION^{commit}" 2> /dev/null; then
+    git -C "$work/x264" fetch --quiet origin
+fi
 git -C "$work/x264" checkout --quiet --detach "$X264_VERSION"
 if [ ! -f "$prefix/lib/libx264.a" ]; then
     (
