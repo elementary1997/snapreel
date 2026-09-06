@@ -14,12 +14,14 @@ import pytest
 
 from snapreel.config import Config
 
-pytest.importorskip("PySide6", reason="окна на PySide6")
-
-# импорт после importorskip — иначе модуль не соберётся там, где Qt нет
-from PySide6.QtCore import QEvent, Qt
-from PySide6.QtGui import QKeyEvent
-from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit
+try:
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit
+except Exception as exc:
+    # `importorskip` ловит только ModuleNotFoundError, а Qt падает на
+    # отсутствующей системной библиотеке (libEGL) обычным ImportError
+    pytest.skip(f"PySide6 недоступен: {exc}", allow_module_level=True)
 
 
 @pytest.fixture(scope="session")
