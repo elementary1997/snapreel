@@ -50,7 +50,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y nasm xvfb \
-            libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev libpulse-dev
+            libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev libpulse-dev \
+            libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-keysyms1 \
+            libxcb-xkb1 libxcb-shape0 libxcb-render-util0 libxcb-image0
 
       - name: FFmpeg build deps (macOS)
         if: runner.os == 'macOS'
@@ -83,7 +85,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[tray]" pyinstaller
+          pip install -e ".[ui]" pyinstaller
 
       - name: Build
         working-directory: packaging
@@ -137,11 +139,11 @@ jobs:
             echo "вшитый ffmpeg не нашёлся"; exit 1
           fi
 
-          # то же про иконку в трее: забытый hiddenimport не виден ни на
-          # сборке, ни на тестах — только у пользователя, который запустил
-          # трей и не дождался иконки
-          if ! grep -qE '^pystray +есть' doctor.txt; then
-            echo "в бинарник не попал pystray — иконки в трее не будет"; exit 1
+          # то же про окна и трей: забытый hiddenimport не виден ни на сборке,
+          # ни на тестах — только у пользователя, который запустил трей и не
+          # дождался иконки
+          if ! grep -qE '^PySide6 +есть' doctor.txt; then
+            echo "в бинарник не попал PySide6 — не будет ни окон, ни трея"; exit 1
           fi
           if ! grep -qE '^pynput +есть' doctor.txt; then
             echo "в бинарник не попал pynput — трей не услышит хоткеи"; exit 1
@@ -202,10 +204,10 @@ jobs:
         env:
           XDG_SESSION_TYPE: x11
         run: |
-          # «pystray есть» в doctor значит лишь, что модуль внутри: бэкенды обе
-          # библиотеки выбирают в рантайме, и без них трей поднимается немым —
-          # иконки нет, хоткеи не слушаются. Видно это только на живом экране,
-          # поэтому здесь трей запускается по-настоящему.
+          # «PySide6 есть» в doctor значит лишь, что модуль внутри: платформенные
+          # плагины Qt и бэкенды pynput выбираются в рантайме, и без них трей
+          # поднимается немым — иконки нет, хоткеи не слушаются. Видно это
+          # только на живом экране, поэтому здесь трей запускается по-настоящему.
           set +e
           xvfb-run --server-args="-screen 0 1280x720x24" \
             timeout 20 ./dist/snapreel tray > tray.log 2>&1
@@ -214,8 +216,8 @@ jobs:
           cat tray.log
 
           # 124 — трея дождался timeout, то есть процесс жил и работал.
-          # Собственных трейсбеков pystray пишет в лог сколько угодно: у Xvfb
-          # нет менеджера трея, докинг тут и не должен удаваться
+          # Менеджера трея у Xvfb нет, и Qt честно об этом говорит — эту
+          # строку мы и ищем ниже
           if [ "$code" != "124" ]; then
             echo "трей вышел сам с кодом $code, а должен был работать"; exit 1
           fi

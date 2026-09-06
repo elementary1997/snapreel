@@ -6,7 +6,8 @@
 pystray в такой ситуации не бросает исключение, а молча пишет себе в лог.
 
 Роль трея играет свой минимальный менеджер XEmbed — поднимать целую панель
-рабочего стола ради одного окна незачем.
+рабочего стола ради одного окна незачем. Qt на X11 встаёт в него так же, как
+любое другое приложение.
 """
 
 from __future__ import annotations
@@ -86,8 +87,8 @@ class SystemTray:
 def system_tray(need):
     if not os.environ.get("DISPLAY"):
         pytest.skip("нужен X-сервер: xvfb-run pytest -m gui")
-    need("Xlib")  # приходит вместе с pystray на Linux
-    need("pystray")
+    need("Xlib")  # python-xlib: им написан сам менеджер
+    need("PySide6")
     tray = SystemTray()
     yield tray
     tray.close()
@@ -98,6 +99,9 @@ def test_the_tray_icon_docks_into_a_system_tray(system_tray, tmp_path):
     environment.pop("WAYLAND_DISPLAY", None)  # проверяем именно путь X11
     environment["XDG_SESSION_TYPE"] = "x11"
     environment["XDG_CONFIG_HOME"] = str(tmp_path)
+    # у Qt в этой сессии может быть выбор, а нам нужен именно X11: иначе окно
+    # и иконка уедут в чужой композитор, и менеджер их не увидит
+    environment["QT_QPA_PLATFORM"] = "xcb"
 
     process = subprocess.Popen(
         [sys.executable, "-m", "snapreel", "tray"],

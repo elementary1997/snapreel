@@ -10,10 +10,11 @@
 | [0002](0002-put-a-file-in-the-clipboard.md) | Класть в буфер обмена файл, а не изображение | Accepted | 2026-09-05 |
 | [0003](0003-drive-ffmpeg-as-a-subprocess.md) | Захват и кодирование — внешним процессом ffmpeg | Accepted | 2026-09-05 |
 | [0004](0004-system-hotkey-over-daemon.md) | Основной способ вызова — системный хоткей, демон вторичен | Accepted | 2026-09-05 |
-| [0005](0005-tkinter-for-overlays.md) | Оверлеи выделения и записи — на tkinter | Accepted | 2026-09-05 |
+| [0005](0005-tkinter-for-overlays.md) | Оверлеи выделения и записи — на tkinter | Частично заменён ADR-0009 | 2026-09-05 |
 | [0006](0006-bundle-a-minimal-ffmpeg.md) | В релизные бинарники вшивается свой минимальный ffmpeg | Accepted | 2026-09-06 |
 | [0007](0007-update-over-the-network.md) | Обновление через сеть — единственное исключение из «в сеть не ходим» | Accepted | 2026-09-06 |
-| [0008](0008-tray-icon-on-pystray.md) | Иконка в трее — на pystray, отдельным резидентом | Accepted | 2026-09-06 |
+| [0008](0008-tray-icon-on-pystray.md) | Иконка в трее — на pystray, отдельным резидентом | Superseded by ADR-0009 | 2026-09-06 |
+| [0009](0009-qt-for-the-interface.md) | Интерфейс — на Qt (PySide6) | Accepted | 2026-09-06 |
 
 ## Что заслуживает ADR
 

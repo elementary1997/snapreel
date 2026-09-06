@@ -1,460 +1,494 @@
-"""Окно настроек на tkinter.
+"""Окно настроек на Qt (PySide6).
 
 Единственное место, где настройки меняются без терминала и без правки TOML
 руками. Комбинацию тут не печатают, а нажимают, — ради этого окно и затевалось.
 
-Вёрстка плотная намеренно: настроек три десятка, и человек приходит сюда
-поменять одну, а не читать. Разделы слева, поля справа, подсказка мелким
-шрифтом под полем — и никакого заголовка во весь экран.
+Строка настройки устроена как в системных настройках: слева название и
+пояснение под ним, справа переключатель или поле. Разделы — слева, сохранение
+— внизу, ничего лишнего на экране нет.
 
-Модуль импортируется лениво: tkinter есть не в каждой сборке Python, а
-`doctor` и запись по `--region` обязаны работать и без него.
+Модуль импортируется лениво: Qt есть не в каждой установке, а `doctor`,
+запись по `--region` и `prune` обязаны работать без него.
 """
 
 from __future__ import annotations
 
-import threading
-import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, ttk
+
+from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtGui import QIcon, QKeyEvent
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from . import autostart, resources, settings, theme, updates
 from . import config as config_module
 from .config import Config
-from .errors import OverlayUnavailable
-from .platform_info import Platform, detect, enable_dpi_awareness
 
-PAD = 8
-LABEL_WIDTH = 24
-# Ширина колонки с полями — в пикселях и одна на все поля: разъехавшиеся по
-# ширине поля и есть то, из-за чего форма выглядит кривой.
-CONTROL_WIDTH = 250
-HINT_WRAP = 330
+PAD = 16
+GAP = 10
+CONTROL_WIDTH = 230
+HOTKEY_WIDTH = 300  # комбинация и кнопка «Изменить» в одну строку
+SIDEBAR_WIDTH = 170
 UPDATE_GROUP = "Обновление"
 
+# Модификаторы приходят отдельными событиями и сами по себе комбинацией не
+# являются: ждём, пока нажмут что-то ещё.
+_MODIFIERS = {
+    Qt.Key.Key_Control: "ctrl",
+    Qt.Key.Key_Shift: "shift",
+    Qt.Key.Key_Alt: "alt",
+    Qt.Key.Key_Meta: "super",
+}
 
-class _HotkeyEntry(ttk.Frame):
-    """Поле, которое запоминает нажатую комбинацию.
 
-    Модификаторы считаются по нажатиям и отпусканиям, а не по битовой маске
-    события: маска у каждой оконной системы своя, а имена клавиш одинаковы
-    везде, где есть tkinter.
+class Switch(QWidget):
+    """Переключатель-таблетка.
+
+    Рисуется сам: родной QCheckBox в Fusion — это квадратик с галочкой, а в
+    настройках, где половина полей «да/нет», таблетка читается быстрее.
     """
 
-    def __init__(self, master, value: str, font=None, palette: theme.Palette = theme.LIGHT):
-        super().__init__(master, style="Card.TFrame")
+    WIDTH = 44
+    HEIGHT = 24
+
+    def __init__(self, value: bool, palette: theme.Palette):
+        super().__init__()
+        self._palette = palette
+        self._value = bool(value)
+        self.setFixedSize(self.WIDTH, self.HEIGHT)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def value(self) -> bool:
+        return self._value
+
+    def setValue(self, value: bool) -> None:
+        self._value = bool(value)
+        self.update()
+
+    def mousePressEvent(self, event) -> None:
+        self.setValue(not self._value)
+
+    def paintEvent(self, event) -> None:
+        from PySide6.QtGui import QColor, QPainter
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        track = self._palette.accent if self._value else self._palette.border
+        painter.setBrush(QColor(track))
+        painter.drawRoundedRect(self.rect(), self.HEIGHT / 2, self.HEIGHT / 2)
+
+        knob = QColor(self._palette.on_accent if self._value else self._palette.muted)
+        painter.setBrush(knob)
+        size = self.HEIGHT - 8
+        left = self.WIDTH - size - 4 if self._value else 4
+        painter.drawEllipse(left, 4, size, size)
+
+
+class HotkeyEdit(QWidget):
+    """Поле, которое запоминает нажатую комбинацию.
+
+    Комбинацию тут не печатают: человек жмёт её целиком, а поле показывает,
+    что уже нажато. Клавиатура перехватывается только на время захвата —
+    иначе окно перестало бы слушаться обычных нажатий.
+    """
+
+    def __init__(self, value: str, palette: theme.Palette):
+        super().__init__()
         self.value = value
-        self._font = font
         self._palette = palette
         self._held: list[str] = []
         self._capturing = False
 
-        # Обычный tk.Label, а не ttk: рамку в один пиксель у ttk-подписи не
-        # задать, а поле должно выглядеть полем, как соседние строки формы.
-        self._label = tk.Label(
-            self,
-            background=palette.field,
-            highlightbackground=palette.border,
-            highlightthickness=1,
-            anchor="w",
-            padx=7,
-            pady=3,
-        )
-        self._label.grid(row=0, column=0, sticky="we")
-        self._button = ttk.Button(
-            self, text="Изменить", width=10, style="Card.TButton", command=self._start
-        )
-        self._button.grid(row=0, column=1, padx=(PAD // 2, 0))
-        self.columnconfigure(0, weight=1)
-        self._show()
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(GAP // 2)
+        self._label = QLineEdit(autostart.describe_safe(value))
+        self._label.setReadOnly(True)
+        self._label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._button = QPushButton("Изменить")
+        self._button.setFixedWidth(92)
+        self._button.clicked.connect(self._toggle)
+        row.addWidget(self._label, 1)
+        row.addWidget(self._button)
 
     def get(self) -> str:
         return self.value
 
-    def _show(self, text: str | None = None, bad: bool = False) -> None:
-        self._label.configure(
-            text=text or autostart.describe_safe(self.value),
-            font=self._font,
-            foreground=self._palette.danger if bad else self._palette.text,
-        )
+    def _toggle(self) -> None:
+        self._stop() if self._capturing else self._start()
 
     def _start(self) -> None:
-        if self._capturing:
-            self._stop()
-            return
         self._capturing = True
         self._held = []
-        self._show("нажмите комбинацию…")
-        self._button.configure(text="Отмена")
-        # Клавиши ловятся на всём окне, а не этим полем: подпись фокус
-        # клавиатуры не принимает, и <KeyPress> на ней молча не сработает.
-        self.winfo_toplevel().bind_all("<KeyPress>", self._press)
-        self.winfo_toplevel().bind_all("<KeyRelease>", self._release)
+        self._label.setText("нажмите комбинацию…")
+        self._button.setText("Отмена")
+        self.grabKeyboard()
 
     def _stop(self) -> None:
         self._capturing = False
         self._held = []
-        self._button.configure(text="Изменить")
-        self.winfo_toplevel().unbind_all("<KeyPress>")
-        self.winfo_toplevel().unbind_all("<KeyRelease>")
-        self._show()
+        self._button.setText("Изменить")
+        self.releaseKeyboard()
+        self._label.setText(autostart.describe_safe(self.value))
 
-    def _press(self, event) -> str:
+    def keyPressEvent(self, event: QKeyEvent) -> None:
         if not self._capturing:
-            return "break"
-        modifier = settings.modifier_of(event.keysym)
-        if modifier:
-            if modifier not in self._held:
-                self._held.append(modifier)
-            self._show("+".join(self._held) + "+…")
-            return "break"
+            super().keyPressEvent(event)
+            return
+        key = Qt.Key(event.key())
+        if key in _MODIFIERS:
+            name = _MODIFIERS[key]
+            if name not in self._held:
+                self._held.append(name)
+            self._label.setText("+".join(self._held) + "+…")
+            return
+        if key is Qt.Key.Key_Escape:
+            self._stop()
+            return
         try:
-            self.value = settings.combo(self._held, event.keysym)
+            self.value = settings.combo(self._held, keysym(event))
         except autostart.HotkeySetupError as exc:
             # частый случай — клавиша без модификатора; объясняем и ждём дальше
-            self._show(str(exc).split(".")[0], bad=True)
-            return "break"
+            self._label.setText(str(exc).split(".")[0])
+            return
         self._stop()
-        return "break"
 
-    def _release(self, event) -> str:
-        modifier = settings.modifier_of(event.keysym)
-        if self._capturing and modifier in self._held:
-            self._held.remove(modifier)
-        return "break"
-
-
-class _Switch(tk.Canvas):
-    """Переключатель вместо галочки.
-
-    Рисуется вручную: у ttk нет ни переключателя, ни возможности собрать его
-    из существующих элементов, а галочка `clam` выглядит как из девяностых.
-    """
-
-    WIDTH = 36
-    HEIGHT = 20
-
-    def __init__(self, master, value: bool, palette: theme.Palette = theme.LIGHT):
-        super().__init__(
-            master,
-            width=self.WIDTH,
-            height=self.HEIGHT,
-            background=palette.surface,
-            highlightthickness=0,
-            cursor="hand2",
-        )
-        self._palette = palette
-        self.variable = tk.BooleanVar(value=value)
-        self.bind("<Button-1>", self._toggle)
-        self.variable.trace_add("write", lambda *_: self._draw())
-        self._draw()
-
-    def _toggle(self, _event=None) -> None:
-        self.variable.set(not self.variable.get())
-
-    def _draw(self) -> None:
-        self.delete("all")
-        on = self.variable.get()
-        track = self._palette.accent if on else self._palette.border
-        knob = self._palette.surface if on else self._palette.muted
-        radius = self.HEIGHT // 2
-        # дорожка — прямоугольник с двумя полукружиями по краям
-        self.create_oval(0, 0, self.HEIGHT, self.HEIGHT, fill=track, outline=track)
-        self.create_oval(
-            self.WIDTH - self.HEIGHT, 0, self.WIDTH, self.HEIGHT, fill=track, outline=track
-        )
-        self.create_rectangle(
-            radius, 0, self.WIDTH - radius, self.HEIGHT, fill=track, outline=track
-        )
-        left = self.WIDTH - self.HEIGHT + 3 if on else 3
-        self.create_oval(left, 3, left + self.HEIGHT - 6, self.HEIGHT - 3, fill=knob, outline=knob)
+    def keyReleaseEvent(self, event: QKeyEvent) -> None:
+        if not self._capturing:
+            super().keyReleaseEvent(event)
+            return
+        name = _MODIFIERS.get(Qt.Key(event.key()))
+        if name and name in self._held:
+            self._held.remove(name)
 
 
-class _DirEntry(ttk.Frame):
+def keysym(event: QKeyEvent) -> str:
+    """Имя клавиши в том виде, в каком его понимает разбор комбинаций."""
+    key = Qt.Key(event.key())
+    if Qt.Key.Key_F1 <= key <= Qt.Key.Key_F35:
+        return f"f{int(key) - int(Qt.Key.Key_F1) + 1}"
+    text = event.text().strip()
+    if len(text) == 1 and text.isprintable():
+        return text.lower()
+    return Qt.Key(key).name.removeprefix("Key_").lower()
+
+
+class DirEdit(QWidget):
     """Строка с путём и кнопкой выбора каталога."""
 
-    def __init__(self, master, value: str):
-        super().__init__(master, style="Card.TFrame")
-        self.variable = tk.StringVar(value=value)
-        ttk.Entry(self, textvariable=self.variable).grid(row=0, column=0, sticky="we")
-        ttk.Button(self, text="Обзор", width=8, style="Card.TButton", command=self._pick).grid(
-            row=0, column=1, padx=(PAD // 2, 0)
-        )
-        self.columnconfigure(0, weight=1)
+    def __init__(self, value: str):
+        super().__init__()
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(GAP // 2)
+        self._edit = QLineEdit(value)
+        button = QPushButton("Обзор")
+        button.setFixedWidth(80)
+        button.clicked.connect(self._pick)
+        row.addWidget(self._edit, 1)
+        row.addWidget(button)
 
     def get(self) -> str:
-        return self.variable.get()
+        return self._edit.text()
 
     def _pick(self) -> None:
-        start = self.variable.get() or str(Config().resolved_output_dir())
-        chosen = filedialog.askdirectory(initialdir=start, title="Куда складывать клипы")
+        start = self._edit.text() or str(Config().resolved_output_dir())
+        chosen = QFileDialog.getExistingDirectory(self, "Куда складывать клипы", start)
         if chosen:
-            self.variable.set(chosen)
+            self._edit.setText(chosen)
 
 
-class _UpdatePanel(ttk.Frame):
-    """Версия, проверка и установка обновления одной кнопкой.
+class _UpdateWorker(QObject):
+    """Сеть живёт в отдельном потоке: окно не должно замирать на запросе."""
 
-    Сеть и скачивание идут в отдельном потоке, а виджеты трогает только
-    главный: Tk не потокобезопасен, поэтому поток лишь складывает сообщения,
-    а забирает их таймер окна.
-    """
+    done = Signal(object, str)  # найденный релиз (или None) и текст ошибки
 
-    def __init__(self, master, config_path: Path | None, palette: theme.Palette = theme.LIGHT):
-        super().__init__(master, style="Card.TFrame")
+    def __init__(self, directory: Path, release=None):
+        super().__init__()
+        self._directory = directory
+        self._release = release
+
+    def check(self) -> None:
+        try:
+            self.done.emit(updates.check(self._directory, force=True), "")
+        except updates.UpdateError as exc:
+            self.done.emit(None, str(exc))
+
+    def install(self) -> None:
+        try:
+            updates.update(self._release)
+        except updates.UpdateError as exc:
+            self.done.emit(None, str(exc))
+            return
+        self.done.emit(self._release, "")
+
+
+class UpdatePanel(QWidget):
+    """Версия, проверка и установка обновления одной кнопкой."""
+
+    def __init__(self, config_path: Path | None, palette: theme.Palette):
+        super().__init__()
+        from . import __version__
+
         self._config_path = config_path
         self._palette = palette
         self._release = None
-        self._mailbox: list[tuple[str, object]] = []
-        self.columnconfigure(1, weight=1)
+        self._thread: QThread | None = None
+        self._worker: _UpdateWorker | None = None
 
-        from . import __version__
+        column = QVBoxLayout(self)
+        column.setContentsMargins(0, GAP, 0, 0)
+        column.setSpacing(GAP // 2)
 
-        ttk.Label(self, text="Версия", style="Card.TLabel", width=LABEL_WIDTH, anchor="w").grid(
-            row=0, column=0, sticky="w", padx=(0, PAD)
-        )
-        ttk.Label(self, text=__version__, style="Combo.TLabel").grid(row=0, column=1, sticky="w")
+        version = QHBoxLayout()
+        version.setSpacing(GAP)
+        version.addWidget(QLabel("Версия"))
+        value = QLabel(__version__)
+        value.setProperty("role", "value")
+        version.addWidget(value)
+        version.addStretch(1)
+        column.addLayout(version)
 
-        self.button = ttk.Button(
-            self, text="Проверить обновления", style="Card.TButton", command=self.check
-        )
-        self.button.grid(row=1, column=1, sticky="w", pady=(PAD, 2))
-        self.status = ttk.Label(self, text="", style="Hint.TLabel", wraplength=320)
-        self.status.grid(row=2, column=1, sticky="w")
+        self.button = QPushButton("Проверить обновления")
+        self.button.clicked.connect(self.check)
+        column.addWidget(self.button, alignment=Qt.AlignmentFlag.AlignLeft)
 
-        self.after(200, self._drain)
+        self.status = QLabel("")
+        self.status.setProperty("role", "hint")
+        self.status.setWordWrap(True)
+        column.addWidget(self.status)
 
     # --- действия --------------------------------------------------------
 
     def check(self) -> None:
-        self._work("Спрашиваю github…", self._check)
+        self._work("check", "Спрашиваю github…")
 
     def install(self) -> None:
-        self._work(f"Скачиваю {self._release.name}…", self._install)
+        self._work("install", f"Скачиваю {self._release.name}…")
 
-    def _work(self, message: str, job) -> None:
-        self.button.configure(state="disabled")
+    def _work(self, what: str, message: str) -> None:
+        if self._thread is not None:
+            return
+        self.button.setEnabled(False)
         self._say(message)
-        threading.Thread(target=job, daemon=True).start()
 
-    def _check(self) -> None:
-        try:
-            directory = (self._config_path or config_module.config_path()).parent
-            release = updates.check(directory, force=True)
-        except updates.UpdateError as exc:
-            self._post("error", str(exc))
+        directory = (self._config_path or config_module.config_path()).parent
+        self._worker = _UpdateWorker(directory, self._release)
+        self._thread = QThread(self)
+        self._worker.moveToThread(self._thread)
+        self._worker.done.connect(lambda release, error: self._finish(what, release, error))
+        self._thread.started.connect(
+            self._worker.check if what == "check" else self._worker.install
+        )
+        self._thread.start()
+
+    def _finish(self, what: str, release, error: str) -> None:
+        if self._thread is not None:
+            self._thread.quit()
+            self._thread.wait()
+            self._thread = None
+            self._worker = None
+        self.button.setEnabled(True)
+
+        if error:
+            self._say(error, bad=True)
             return
-        self._post("checked", release)
-
-    def _install(self) -> None:
-        try:
-            path = updates.update(self._release, progress=self._progress)
-        except updates.UpdateError as exc:
-            self._post("error", str(exc))
+        if what == "install":
+            self._say("Обновлено. Заработает при следующем запуске.", ok=True)
+            self._rebind("Проверить обновления", self.check)
             return
-        self._post("installed", path)
-
-    def _progress(self, done: int, total: int) -> None:
-        if total:
-            self._post("progress", done * 100 // total)
-
-    # --- обмен с потоком -------------------------------------------------
-
-    def _post(self, kind: str, payload: object) -> None:
-        self._mailbox.append((kind, payload))
-
-    def _drain(self) -> None:
-        try:
-            while self._mailbox:
-                kind, payload = self._mailbox.pop(0)
-                self._handle(kind, payload)
-            self.after(200, self._drain)
-        except tk.TclError:
-            # окно закрыли, пока поток ещё качал: докладывать больше некому,
-            # и это нормальный исход, а не ошибка
-            return
-
-    def _handle(self, kind: str, payload) -> None:
-        if kind == "progress":
-            self._say(f"Скачиваю… {payload}%")
-            return
-        if kind == "error":
-            self._say(str(payload), bad=True)
-        elif kind == "checked" and payload is None:
+        if release is None:
             self._say("Установлена последняя версия", ok=True)
-        elif kind == "checked":
-            self._release = payload
-            self.button.configure(text=f"Обновить до {payload.name}", command=self.install)
-            self._say(f"Есть версия {payload.name}")
-        elif kind == "installed":
-            self._say("Обновлено. Изменения вступят в силу при следующем запуске.", ok=True)
-            self.button.configure(text="Проверить обновления", command=self.check)
-        self.button.configure(state="normal")
+            return
+        self._release = release
+        self._rebind(f"Обновить до {release.name}", self.install)
+        self._say(f"Есть версия {release.name}")
+
+    def _rebind(self, text: str, action) -> None:
+        self.button.setText(text)
+        self.button.clicked.disconnect()
+        self.button.clicked.connect(action)
 
     def _say(self, text: str, ok: bool = False, bad: bool = False) -> None:
-        colour = self._palette.ok if ok else self._palette.danger if bad else self._palette.muted
-        self.status.configure(text=text, foreground=colour)
+        _restyle(self.status, "ok" if ok else "error" if bad else "hint", text)
 
 
-class SettingsWindow:
-    """Окно целиком: разделы слева, поля справа, сохранение внизу."""
+class SettingsWindow(QDialog):
+    """Окно целиком: разделы слева, строки настроек справа, сохранение внизу."""
 
     def __init__(self, config: Config, path: Path | None = None):
+        super().__init__()
         self.config = config
         self.path = path
         self.saved = False
-        self._widgets: dict[str, object] = {}
-        self._errors: dict[str, ttk.Label] = {}
-        self._pages: dict[str, ttk.Frame] = {}
-        self._buttons: dict[str, ttk.Button] = {}
-
-        self.root = tk.Tk()
-        self.root.title("snapreel")
         self.palette = theme.resolve(getattr(config, "theme", "auto"))
-        self.fonts = theme.apply(self.root, self.palette)
-        self._set_icon()
-        self._build()
-        self.root.minsize(600, 420)
+        self._widgets: dict[str, object] = {}
+        self._hints: dict[str, QLabel] = {}
+        self._order: list[str] = []
 
-    def run(self) -> bool:
-        """Показывает окно; True — настройки сохранены."""
-        self.root.mainloop()
-        return self.saved
+        self.setWindowTitle("snapreel")
+        icon = resources.icon()
+        if icon is not None:
+            self.setWindowIcon(QIcon(str(icon)))
+        self.resize(760, 540)
+        self.setMinimumSize(680, 470)
+        self._build()
 
     # --- сборка ----------------------------------------------------------
 
-    def _set_icon(self) -> None:
-        """Иконка окна: `.ico` на Windows, PNG везде остальное.
-
-        Своей иконки может и не быть — собранный без неё бинарник обязан
-        открыть окно так же, просто со значком по умолчанию.
-        """
-        try:
-            if detect().platform is Platform.WINDOWS:
-                path = resources.windows_icon()
-                if path is not None:
-                    self.root.iconbitmap(default=str(path))
-                    return
-            png = resources.icon()
-            if png is not None:
-                # ссылку держим сами: Tk не считает её за владение картинкой
-                self._icon_image = tk.PhotoImage(file=str(png))
-                self.root.iconphoto(True, self._icon_image)
-        except tk.TclError:
-            pass
-
     def _build(self) -> None:
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(PAD, PAD, PAD, PAD)
+        outer.setSpacing(GAP)
 
-        body = ttk.Frame(self.root, padding=(PAD, PAD, PAD, 0))
-        body.grid(row=0, column=0, sticky="nsew")
-        body.columnconfigure(1, weight=1)
-        body.rowconfigure(0, weight=1)
+        body = QHBoxLayout()
+        body.setSpacing(GAP)
+        outer.addLayout(body, 1)
 
-        sidebar = ttk.Frame(body, style="Sidebar.TFrame")
-        sidebar.grid(row=0, column=0, sticky="ns", padx=(0, PAD))
+        self.nav = QListWidget()
+        self.nav.setFixedWidth(SIDEBAR_WIDTH)
+        self.nav.setFrameShape(QFrame.Shape.NoFrame)
+        self.nav.currentRowChanged.connect(self._select)
+        body.addWidget(self.nav)
 
-        card = tk.Frame(body, background=self.palette.border)  # рамка в один пиксель
-        card.grid(row=0, column=1, sticky="nsew")
-        card.columnconfigure(0, weight=1)
-        card.rowconfigure(0, weight=1)
-        inner = ttk.Frame(card, style="Card.TFrame", padding=(PAD + 4, PAD + 2))
-        inner.grid(row=0, column=0, sticky="nsew", padx=1, pady=1)
-        inner.columnconfigure(0, weight=1)
-        inner.rowconfigure(0, weight=1)
+        panel = QFrame()
+        panel.setObjectName("Panel")
+        inside = QVBoxLayout(panel)
+        inside.setContentsMargins(1, 1, 1, 1)
+        body.addWidget(panel, 1)
+
+        self.stack = QStackedWidget()
+        inside.addWidget(self.stack)
 
         values = settings.values_of(self.config)
-        for index, group in enumerate(settings.GROUPS):
-            page = ttk.Frame(inner, style="Card.TFrame")
-            # поля не растягиваются по ширине карточки: колонка полей одна и
-            # та же у всех строк, а лишнее место забирает пустая колонка
-            page.columnconfigure(1, minsize=CONTROL_WIDTH)
-            page.columnconfigure(2, weight=1)
-            self._pages[group.title] = page
-            for row, field in enumerate(group.fields):
-                self._add_field(page, row, field, values[field.name])
+        for group in settings.GROUPS:
+            self.nav.addItem(QListWidgetItem(group.title))
+            self._order.append(group.title)
+            self.stack.addWidget(self._page(group, values))
+        self.nav.setCurrentRow(0)
 
-            button = ttk.Button(
-                sidebar,
-                text=group.title,
-                style="Side.TButton",
-                # ширина по самому длинному названию: обрезанный «Горячие
-                # клавиш» — первое, что видит человек, открывший окно
-                width=max(len(item.title) for item in settings.GROUPS) + 1,
-                command=lambda title=group.title: self._select(title),
-            )
-            button.grid(row=index, column=0, sticky="we", pady=(0, 1))
-            self._buttons[group.title] = button
+        footer = QHBoxLayout()
+        footer.setSpacing(GAP // 2)
+        self.status = QLabel("")
+        self.status.setProperty("role", "hint")
+        self.status.setWordWrap(True)
+        footer.addWidget(self.status, 1)
 
-            if group.title == UPDATE_GROUP:
-                self.updates = _UpdatePanel(page, self.path, self.palette)
-                self.updates.grid(
-                    row=len(group.fields) * 2, column=0, columnspan=2, sticky="we", pady=(PAD, 0)
-                )
+        close = QPushButton("Закрыть")
+        close.clicked.connect(self.close)
+        save = QPushButton("Сохранить")
+        save.setProperty("role", "accent")
+        save.setDefault(True)
+        save.clicked.connect(self._save)
+        footer.addWidget(close)
+        footer.addWidget(save)
+        outer.addLayout(footer)
 
-        self._inner = inner
-        self._select(settings.GROUPS[0].title)
+    def _page(self, group: settings.Group, values: dict) -> QWidget:
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-        footer = ttk.Frame(self.root, padding=(PAD, PAD, PAD, PAD))
-        footer.grid(row=1, column=0, sticky="we")
-        footer.columnconfigure(0, weight=1)
-        self._status = ttk.Label(footer, text="", style="Status.TLabel", wraplength=380)
-        self._status.grid(row=0, column=0, sticky="w")
-        ttk.Button(footer, text="Закрыть", command=self.root.destroy).grid(row=0, column=1)
-        ttk.Button(footer, text="Сохранить", style="Accent.TButton", command=self._save).grid(
-            row=0, column=2, padx=(PAD // 2, 0)
-        )
+        page = QWidget()
+        page.setObjectName("Page")
+        column = QVBoxLayout(page)
+        column.setContentsMargins(PAD + 2, PAD, PAD + 2, PAD)
+        column.setSpacing(0)
 
-    def _select(self, title: str) -> None:
-        for name, page in self._pages.items():
-            page.grid_forget() if name != title else page.grid(row=0, column=0, sticky="nsew")
-        for name, button in self._buttons.items():
-            button.configure(style="SideActive.TButton" if name == title else "Side.TButton")
+        title = QLabel(group.title)
+        title.setProperty("role", "title")
+        column.addWidget(title)
+        column.addSpacing(GAP // 2)
 
-    def _add_field(self, page, row: int, field: settings.Field, value) -> None:
-        line = row * 2
-        ttk.Label(page, text=field.label, style="Card.TLabel", width=LABEL_WIDTH, anchor="w").grid(
-            row=line, column=0, sticky="w", pady=(0, 1), padx=(0, PAD)
-        )
-        page.rowconfigure(line, minsize=26)  # одинаковая высота строки у всех полей
+        for index, field in enumerate(group.fields):
+            if index:
+                column.addWidget(_divider())
+            column.addWidget(self._row(field, values[field.name]))
 
+        if group.title == UPDATE_GROUP:
+            column.addWidget(_divider())
+            self.updates = UpdatePanel(self.path, self.palette)
+            column.addWidget(self.updates)
+
+        column.addStretch(1)
+        area.setWidget(page)
+        return area
+
+    def _row(self, field: settings.Field, value) -> QWidget:
+        """Строка настройки: слева название и пояснение, справа контрол."""
+        row = QWidget()
+        row.setObjectName("Row")
+        line = QHBoxLayout(row)
+        line.setContentsMargins(0, GAP, 0, GAP)
+        line.setSpacing(GAP)
+
+        texts = QVBoxLayout()
+        texts.setSpacing(1)
+        texts.addWidget(QLabel(field.label))
+        hint = QLabel(field.hint)
+        hint.setProperty("role", "hint")
+        hint.setWordWrap(True)
+        hint.setVisible(bool(field.hint))
+        texts.addWidget(hint)
+        self._hints[field.name] = hint
+        line.addLayout(texts, 1)
+
+        control = self._control(field, value)
+        self._widgets[field.name] = control
+        line.addWidget(control, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        return row
+
+    def _control(self, field: settings.Field, value) -> QWidget:
         if field.kind == "hotkey":
-            widget = _HotkeyEntry(page, str(value), self.fonts["mono"], self.palette)
+            widget = HotkeyEdit(str(value), self.palette)
+            widget.setFixedWidth(HOTKEY_WIDTH)
+            return widget
         elif field.kind == "bool":
-            widget = _Switch(page, bool(value), self.palette)
+            return Switch(bool(value), self.palette)
         elif field.kind == "choice":
-            variable = tk.StringVar(value=str(value))
-            widget = ttk.Combobox(
-                page, textvariable=variable, values=list(field.choices), state="readonly"
-            )
-            widget.variable = variable
+            widget = QComboBox()
+            widget.addItems(list(field.choices))
+            widget.setCurrentText(str(value))
         elif field.kind == "dir":
-            widget = _DirEntry(page, str(value))
+            widget = DirEdit(str(value))
         else:
-            variable = tk.StringVar(value=str(value))
-            widget = ttk.Entry(page, textvariable=variable)
-            widget.variable = variable
+            widget = QLineEdit(str(value))
+        widget.setFixedWidth(CONTROL_WIDTH)
+        return widget
 
-        widget.grid(row=line, column=1, sticky="w" if field.kind == "bool" else "we", pady=(0, 1))
-        self._widgets[field.name] = widget
-
-        # Подсказка живёт под полем, там же показывается ошибка. Строка под
-        # неё есть всегда, даже пустая: иначе соседние поля стоят с разным
-        # шагом и форма выглядит косой.
-        note = ttk.Label(page, text=field.hint or " ", style="Hint.TLabel", wraplength=HINT_WRAP)
-        note.grid(row=line + 1, column=1, columnspan=2, sticky="w", pady=(0, PAD))
-        self._errors[field.name] = note
+    def _select(self, row: int) -> None:
+        self.stack.setCurrentIndex(row)
 
     # --- сохранение ------------------------------------------------------
 
     def _collect(self) -> dict[str, object]:
         raw: dict[str, object] = {}
         for name, widget in self._widgets.items():
-            if isinstance(widget, (_HotkeyEntry, _DirEntry)):
+            if isinstance(widget, (HotkeyEdit, DirEdit)):
                 raw[name] = widget.get()
+            elif isinstance(widget, Switch):
+                raw[name] = widget.value()
+            elif isinstance(widget, QComboBox):
+                raw[name] = widget.currentText()
             else:
-                raw[name] = widget.variable.get()
+                raw[name] = widget.text()
         return raw
 
     def _save(self) -> None:
@@ -462,7 +496,7 @@ class SettingsWindow:
         self._show_errors(errors)
         if errors:
             self._tell("Не сохранено: поправьте отмеченное красным.", bad=True)
-            self._select(_first_group_with(errors))
+            self.nav.setCurrentRow(self._order.index(_first_group_with(errors)))
             return
 
         try:
@@ -483,16 +517,30 @@ class SettingsWindow:
             return f"Хоткей назначить не вышло: {exc}"
 
     def _tell(self, text: str, ok: bool = False, bad: bool = False) -> None:
-        style = "StatusOk.TLabel" if ok else "StatusBad.TLabel" if bad else "Status.TLabel"
-        self._status.configure(text=text, style=style)
+        _restyle(self.status, "ok" if ok else "error" if bad else "hint", text)
 
     def _show_errors(self, errors: dict[str, str]) -> None:
         for field in settings.FIELDS:
-            note = self._errors[field.name]
-            if field.name in errors:
-                note.configure(text=errors[field.name], style="Error.TLabel")
-            else:
-                note.configure(text=field.hint or " ", style="Hint.TLabel")
+            hint = self._hints[field.name]
+            broken = field.name in errors
+            _restyle(hint, "error" if broken else "hint", errors.get(field.name, field.hint))
+            hint.setVisible(bool(hint.text()))
+
+
+def _restyle(label: QLabel, role: str, text: str) -> None:
+    """Меняет роль подписи: Qt перечитывает таблицу стилей только по просьбе."""
+    label.setProperty("role", role)
+    label.setText(text)
+    label.style().unpolish(label)
+    label.style().polish(label)
+
+
+def _divider() -> QFrame:
+    line = QFrame()
+    line.setObjectName("Divider")
+    line.setFixedHeight(1)
+    line.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    return line
 
 
 def _first_group_with(errors: dict[str, str]) -> str:
@@ -504,13 +552,14 @@ def _first_group_with(errors: dict[str, str]) -> str:
 
 
 def open_settings(config: Config, path: Path | None = None) -> bool:
-    """Показывает окно настроек. True — пользователь сохранил изменения."""
-    enable_dpi_awareness()  # иначе на Windows со масштабом 125% окно будет мыльным
-    try:
-        window = SettingsWindow(config, path)
-    except tk.TclError as exc:
-        raise OverlayUnavailable(
-            f"не открыть окно настроек: {exc}. Настройте через `snapreel hotkey set` "
-            "или правкой конфига."
-        ) from exc
-    return window.run()
+    """Показывает окно настроек. True — пользователь сохранил изменения.
+
+    Диалог крутит свой цикл событий: так окно ждёт человека и в одиночном
+    запуске, и внутри трея, где цикл уже идёт.
+    """
+    from .qt import application
+
+    application(config)
+    window = SettingsWindow(config, path)
+    window.exec()
+    return window.saved

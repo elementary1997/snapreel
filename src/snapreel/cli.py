@@ -533,7 +533,7 @@ def _offer_install(cfg: Config) -> bool:
 
 
 def _tray(cfg: Config, path: Path | None, offer_install: bool = False) -> int:
-    """Резидент с иконкой; без pystray объясняет, чем его заменить."""
+    """Резидент с иконкой; без Qt объясняет, чем его заменить."""
     from .errors import TrayUnavailable
     from .tray import run as run_tray
 
@@ -640,10 +640,18 @@ def _doctor(cfg) -> int:
     else:
         print("pynput          нет (нужен трею и `snapreel daemon` для хоткеев)")
 
-    if find_spec("pystray") and find_spec("PIL"):
-        print("pystray         есть")
+    if find_spec("PySide6"):
+        print("PySide6         есть")
     else:
-        print("pystray         нет (иконку в трее не показать: pip install 'snapreel[tray]')")
+        print("PySide6         нет (окна и трей не показать: pip install 'snapreel[ui]')")
+
+    # Qt на Linux без этой библиотеки не поднимает окно вовсе, и понять это
+    # по своему опыту человек не может: окно просто не появляется
+    if env.is_linux and not deps.is_satisfied(deps.XCB_CURSOR):
+        problems.append(
+            "нет libxcb-cursor0 — Qt не покажет ни окна настроек, ни иконки "
+            "(apt install libxcb-cursor0)"
+        )
     print(f"автозапуск:     {'включён' if autostart.autostart_enabled(env) else 'выключен'}")
 
     if problems:

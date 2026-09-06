@@ -33,7 +33,7 @@ Write-Host "== окружение: $venv"
 $pip = Join-Path $venv 'Scripts\pip.exe'
 $app = Join-Path $venv 'Scripts\snapreel.exe'
 & $pip install --quiet --upgrade pip
-& $pip install --quiet -e "$root[tray]"
+& $pip install --quiet -e "$root[ui]"
 
 $setupArgs = @('setup')
 if ($Hotkey)    { $setupArgs += @('--hotkey', $Hotkey) }

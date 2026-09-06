@@ -24,7 +24,7 @@ fi
 echo "== окружение: $venv"
 "$python" -m venv "$venv"
 "$venv/bin/pip" install --quiet --upgrade pip
-"$venv/bin/pip" install --quiet -e "$root[tray]"
+"$venv/bin/pip" install --quiet -e "$root[ui]"
 
 echo "== настройка"
 "$venv/bin/snapreel" setup "$@"

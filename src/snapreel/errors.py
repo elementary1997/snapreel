@@ -16,4 +16,4 @@ class OverlayUnavailable(RuntimeError):
 
 
 class TrayUnavailable(RuntimeError):
-    """Иконку в трее показать нечем — нет pystray или нет самого трея."""
+    """Иконку в трее показать нечем — нет Qt или нет самого трея."""

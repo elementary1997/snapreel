@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted (2026-09-06)
+Superseded by [ADR-0009](0009-qt-for-the-interface.md) (2026-09-06)
+
+Решение держать иконку отдельным резидентом осталось в силе; сменился
+инструмент — вместо pystray её рисует `QSystemTrayIcon`.
 
 ## Context
 

@@ -26,30 +26,60 @@ hidden = [
     "tkinter",
 ]
 
-# pynput нужен хоткеям трея и команде daemon, pystray с Pillow — самой иконке.
-# Наличие проверяется find_spec, а не импортом: на сборочном раннере дисплея
-# нет, и оба модуля там падают на подключении к X-серверу — pynput своим
-# ImportError, pystray ошибкой Xlib. Импорт сказал бы «модуля нет», хотя он
-# есть, и собрался бы бинарник без хоткеев и без трея. Если модуля правда нет,
-# бинарник всё равно должен собраться — без этих возможностей.
-# Бэкенды обе библиотеки выбирают в рантайме по платформе, поэтому граф
-# импортов их не видит: с одним лишь "pynput" в бинарнике оказывается пакет,
-# который на первом же обращении говорит «this platform is not supported».
-# Берётся набор той платформы, на которой идёт сборка, — релиз собирается на
-# каждой отдельно.
+# pynput нужен хоткеям, PySide6 — окнам и трею. Наличие проверяется find_spec,
+# а не импортом: на сборочном раннере дисплея нет, и оба модуля там падают на
+# подключении к оконной системе. Импорт сказал бы «модуля нет», хотя он есть,
+# и собрался бы бинарник без хоткеев и без окон.
+#
+# Бэкенды pynput выбираются в рантайме, поэтому граф импортов их не видит:
+# берётся набор той платформы, на которой идёт сборка.
 _PYNPUT = {
     "win32": ["pynput.keyboard._win32", "pynput.mouse._win32", "pynput._util.win32"],
     "darwin": ["pynput.keyboard._darwin", "pynput.mouse._darwin", "pynput._util.darwin"],
 }.get(sys.platform, ["pynput.keyboard._xorg", "pynput.mouse._xorg", "pynput._util.xorg"])
-_PYSTRAY = {
-    "win32": ["pystray._win32"],
-    "darwin": ["pystray._darwin"],
-}.get(sys.platform, ["pystray._xorg"])
 
 if find_spec("pynput"):
     hidden += ["pynput", "pynput.keyboard", "pynput.mouse", *_PYNPUT]
-if find_spec("pystray"):
-    hidden += ["pystray", *_PYSTRAY, "PIL", "PIL.Image", "PIL.ImageDraw"]
+if find_spec("PySide6"):
+    hidden += ["PySide6.QtCore", "PySide6.QtGui", "PySide6.QtWidgets"]
+
+# Qt большой, и в бинарник ему незачем ехать целиком: snapreel рисует окна
+# виджетами и не трогает ни QML, ни мультимедиа, ни базы данных
+qt_excludes = [
+    "PySide6.Qt3DAnimation",
+    "PySide6.Qt3DCore",
+    "PySide6.Qt3DExtras",
+    "PySide6.Qt3DInput",
+    "PySide6.Qt3DLogic",
+    "PySide6.Qt3DRender",
+    "PySide6.QtCharts",
+    "PySide6.QtDataVisualization",
+    "PySide6.QtMultimedia",
+    "PySide6.QtMultimediaWidgets",
+    "PySide6.QtNetwork",
+    "PySide6.QtOpenGL",
+    "PySide6.QtOpenGLWidgets",
+    "PySide6.QtPdf",
+    "PySide6.QtPdfWidgets",
+    "PySide6.QtPositioning",
+    "PySide6.QtQml",
+    "PySide6.QtQuick",
+    "PySide6.QtQuick3D",
+    "PySide6.QtQuickWidgets",
+    "PySide6.QtRemoteObjects",
+    "PySide6.QtScxml",
+    "PySide6.QtSensors",
+    "PySide6.QtSerialPort",
+    "PySide6.QtSql",
+    "PySide6.QtSvg",
+    "PySide6.QtSvgWidgets",
+    "PySide6.QtTest",
+    "PySide6.QtTextToSpeech",
+    "PySide6.QtWebChannel",
+    "PySide6.QtWebEngineCore",
+    "PySide6.QtWebEngineWidgets",
+    "PySide6.QtWebSockets",
+]
 
 binaries = []
 _bundled_ffmpeg = os.environ.get("SNAPREEL_BUNDLE_FFMPEG")
@@ -72,8 +102,8 @@ analysis = Analysis(
     hiddenimports=hidden,
     hookspath=[],
     runtime_hooks=[],
-    # PIL исключается только там, где трея в сборке нет: иконку рисует он
-    excludes=["numpy", "pytest"] + ([] if "PIL" in hidden else ["PIL"]),
+    # tkinter пока нужен: оверлей выделения и рамка записи ещё на нём
+    excludes=["numpy", "pytest", "PIL"] + qt_excludes,
     cipher=block_cipher,
     noarchive=False,
 )

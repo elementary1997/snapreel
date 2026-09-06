@@ -165,22 +165,45 @@ def test_a_failed_launch_is_reported_and_does_not_raise(tray_app, monkeypatch):
 # --- настройки ------------------------------------------------------------
 
 
-def test_settings_open_in_a_separate_process(tray_app):
-    tray_app.app.open_settings()
-    tray_app.app.join()
-    assert tray_app.launched[0][-1] == "settings"
-
-
-def test_the_settings_item_is_disabled_while_the_window_is_open(tray_app, monkeypatch):
-    process = FakeProcess()
-    monkeypatch.setattr(tray_app.app, "_launch", lambda argv: process)
-    tray_app.app.open_settings()
-    assert not tray_app.item("settings").enabled
+def test_settings_open_in_the_same_process(tray_app, monkeypatch):
+    """Окно живёт в цикле событий трея: у Qt он один на всё приложение."""
+    opened = []
+    monkeypatch.setattr(
+        "snapreel.settings_ui.open_settings", lambda config, path=None: opened.append(path) or True
+    )
 
     tray_app.app.open_settings()
-    assert tray_app.launched == []  # второе окно не открывается
 
-    process.finish()
+    assert opened == [tray_app.app.config_path]
+    assert tray_app.launched == []  # процесс на это не заводится
+
+
+def test_a_second_settings_window_does_not_open(tray_app, monkeypatch):
+    """Пункт меню выключен, пока окно открыто, и второе окно не заводится."""
+    seen = []
+
+    def once(config, path=None):
+        seen.append(tray_app.item("settings").enabled)  # каким пункт виден изнутри
+        tray_app.app.open_settings()  # повторное нажатие, пока окно открыто
+        return True
+
+    monkeypatch.setattr("snapreel.settings_ui.open_settings", once)
+
+    tray_app.app.open_settings()
+
+    assert seen == [False]  # пункт выключен, пока окно на экране
+    assert tray_app.item("settings").enabled  # и снова доступен после закрытия
+
+
+def test_a_broken_settings_window_does_not_take_down_the_tray(tray_app, monkeypatch):
+    def explode(config, path=None):
+        raise RuntimeError("окно не собралось")
+
+    monkeypatch.setattr("snapreel.settings_ui.open_settings", explode)
+
+    tray_app.app.open_settings()
+
+    assert any("не открыть настройки" in note for note in tray_app.notes)
     assert tray_app.item("settings").enabled
 
 
@@ -326,50 +349,53 @@ def test_a_failed_install_keeps_the_update_offered(tray_app, monkeypatch):
 
 
 @pytest.mark.gui
-def test_the_menu_translates_to_pystray(tray_app, need):
-    """Единственная проверка перевода меню в pystray.
+def test_the_menu_translates_to_a_qt_menu(tray_app, need):
+    """Единственная проверка перевода меню в Qt: пункты, галочки, разделители."""
+    need("PySide6")
+    from PySide6.QtWidgets import QApplication, QMenu
 
-    Маркер `gui` не про окно, а про дисплей: без него pystray не импортируется
-    вовсе. В обычном прогоне тест скипался бы молча и не выполнялся ни в одном
-    job CI — а под `xvfb-run pytest -m gui` его гоняет тот же job, что и
-    докинг иконки.
-    """
-    need("pystray")
-    menu = tray.build_menu(tray_app.app)
-    labels = [str(entry.text) for entry in menu.items if entry.text]
+    QApplication.instance() or QApplication([])
+    menu = QMenu()
+
+    tray.fill_menu(menu, tray_app.app.menu())
+
+    labels = [action.text() for action in menu.actions() if not action.isSeparator()]
     assert "Настройки…" in labels
     assert "Выйти" in labels
+    assert any(action.isCheckable() for action in menu.actions())
 
 
 class FakeIcon:
-    """Иконка pystray ровно в той части, которая нужна трею."""
+    """То, что трей считает иконкой: обновить меню и погасить приложение."""
 
-    def __init__(self, visible: bool = True):
-        self.visible = visible
-        self.menu = None
-        self.icon = None
-        self.title = ""
+    def __init__(self):
+        self.updates = 0
         self.stopped = 0
 
     def update_menu(self) -> None:
-        pass
+        self.updates += 1
 
     def stop(self) -> None:
         self.stopped += 1
 
 
-def test_a_tray_that_never_appears_says_why(tray_app, capsys):
-    tray_app.app.attach(FakeIcon(visible=False))
-    tray_app.app.watch_dock(timeout=0.01)
-    tray_app.app.join()
-    assert "нет системного трея" in capsys.readouterr().err
+def test_refresh_only_signals_the_icon(tray_app):
+    """Из потоков нельзя рисовать: `refresh` лишь просит главный перечитать меню."""
+    icon = FakeIcon()
+    tray_app.app.attach(icon)
+
+    tray_app.app.refresh()
+
+    assert icon.updates == 1
 
 
-def test_a_docked_icon_stays_quiet(tray_app, capsys):
-    tray_app.app.attach(FakeIcon(visible=True))
-    tray_app.app.watch_dock(timeout=0.01)
-    tray_app.app.join()
-    assert capsys.readouterr().err == ""
+def test_a_broken_icon_does_not_take_down_the_tray(tray_app):
+    class Broken(FakeIcon):
+        def update_menu(self):
+            raise RuntimeError("меню не перечиталось")
+
+    tray_app.app.attach(Broken())
+    tray_app.app.refresh()  # молча пережить
 
 
 def test_quitting_stops_the_icon_and_the_hotkeys(tray_app):
@@ -384,29 +410,38 @@ def test_quitting_stops_the_icon_and_the_hotkeys(tray_app):
     assert stopped == [1]
 
 
-def make_icon(module: str, visible: bool = True):
-    """Иконка, притворяющаяся конкретным бэкендом pystray."""
-    kind = type("Icon", (FakeIcon,), {"__module__": module})
-    return kind(visible=visible)
+def test_a_session_without_a_tray_is_explained(monkeypatch, capsys, tmp_path, need):
+    """Qt отвечает честно: трея в сессии нет — говорим об этом и живём дальше."""
+    need("PySide6")
+    from PySide6.QtWidgets import QApplication, QSystemTrayIcon
+
+    QApplication.instance() or QApplication([])
+    monkeypatch.setattr(QSystemTrayIcon, "isSystemTrayAvailable", staticmethod(lambda: False))
+    monkeypatch.setattr(tray.TrayApp, "bind_hotkeys", lambda self: None)
+    monkeypatch.setattr(tray.TrayApp, "watch_updates", lambda self: None)
+    monkeypatch.setattr(tray.TrayApp, "greet", lambda self: None)
+    monkeypatch.setattr(
+        "snapreel.qt.application", lambda config=None: (QApplication.instance(), False)
+    )
+    monkeypatch.setattr(QApplication, "exec", lambda self: 0)
+
+    assert tray.run(Config(), tmp_path / "c.toml", ENV) == 0
+    assert "нет системного трея" in capsys.readouterr().err
 
 
-def test_an_x11_icon_without_a_tray_manager_is_not_really_visible(monkeypatch):
-    monkeypatch.setattr(tray, "systray_manager_present", lambda: False)
-    assert not tray.visible(make_icon("pystray._xorg"))
+def test_a_missing_qt_comes_out_as_our_own_error(monkeypatch, tmp_path):
+    """Без Qt команда обязана объяснить, чего не хватает."""
+    from snapreel.errors import OverlayUnavailable
 
+    def refuse(config=None):
+        raise OverlayUnavailable("нет PySide6 — окна показать нечем")
 
-def test_an_x11_icon_with_a_tray_manager_is_visible(monkeypatch):
-    monkeypatch.setattr(tray, "systray_manager_present", lambda: True)
-    assert tray.visible(make_icon("pystray._xorg"))
+    monkeypatch.setattr("snapreel.qt.application", refuse)
 
+    with pytest.raises(TrayUnavailable) as failure:
+        tray.run(Config(), tmp_path / "c.toml", ENV)
 
-def test_other_backends_are_taken_at_their_word(monkeypatch):
-    def unexpected():
-        raise AssertionError("селекцию X11 спрашивать не у кого")
-
-    monkeypatch.setattr(tray, "systray_manager_present", unexpected)
-    assert tray.visible(make_icon("pystray._appindicator"))
-    assert not tray.visible(make_icon("pystray._appindicator", visible=False))
+    assert "PySide6" in str(failure.value)
 
 
 def test_the_cli_explains_a_missing_tray(monkeypatch, capsys, tmp_path):
@@ -455,17 +490,16 @@ def test_an_unparsable_hotkey_comes_out_as_our_own_error(tmp_path, need):
     assert "не разобрать" in str(failure.value)
 
 
-def test_the_child_processes_read_the_same_config(tray_app):
-    """Окно настроек должно сохранять туда, откуда трей потом перечитает."""
+def test_the_recording_process_reads_the_same_config(tray_app):
+    """Запись должна идти с тем же конфигом, который читает трей."""
     path = str(tray_app.app.config_path)
 
     tray_app.app.record()
-    tray_app.app.open_settings()
     tray_app.app.join()
 
-    for argv in tray_app.launched:
-        assert "--config" in argv
-        assert argv[argv.index("--config") + 1] == path
+    argv = tray_app.launched[0]
+    assert "--config" in argv
+    assert argv[argv.index("--config") + 1] == path
 
 
 def test_a_default_config_adds_no_flag(tmp_path):
@@ -477,43 +511,6 @@ def test_a_default_config_adds_no_flag(tmp_path):
     app.join()
 
     assert "--config" not in launched[0]
-
-
-def test_an_unreachable_display_comes_out_as_our_own_error(monkeypatch):
-    """Без графической сессии pystray падает не ImportError, а ошибкой Xlib."""
-    import builtins
-
-    real = builtins.__import__
-
-    def refuse(name, *args, **kwargs):
-        if name == "pystray":
-            raise RuntimeError('Bad display name ""')
-        return real(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", refuse)
-
-    with pytest.raises(TrayUnavailable) as failure:
-        tray._pystray()
-
-    assert "Bad display name" in str(failure.value)
-
-
-def test_a_missing_pystray_names_the_extra(monkeypatch):
-    import builtins
-
-    real = builtins.__import__
-
-    def absent(name, *args, **kwargs):
-        if name == "pystray":
-            raise ModuleNotFoundError("No module named 'pystray'")
-        return real(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", absent)
-
-    with pytest.raises(TrayUnavailable) as failure:
-        tray._pystray()
-
-    assert "snapreel[tray]" in str(failure.value)
 
 
 def test_the_first_launch_says_where_to_look(tray_app):
@@ -533,9 +530,13 @@ def test_a_configured_launch_greets_nobody(tray_app):
 
 def test_the_tray_icon_comes_from_the_package(need):
     """Иконка нарисована заранее и лежит в пакете, а не рисуется на лету."""
-    need("PIL")
+    need("PySide6")
+    from PySide6.QtWidgets import QApplication
+
     from snapreel import resources
 
+    QApplication.instance() or QApplication([])
     assert resources.icon() is not None
     assert resources.icon(recording=True) != resources.icon()
-    assert tray.image(size=32).size == (32, 32)
+    assert not tray.icon().isNull()
+    assert not tray.icon(recording=True).isNull()

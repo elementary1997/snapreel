@@ -13,9 +13,9 @@ dependencies = []
 
 [project.optional-dependencies]
 daemon = ["pynput>=1.7"]
-# tray тянет за собой pynput: иконка слушает и горячие клавиши
-tray = ["pystray>=0.19", "pillow>=10.0", "pynput>=1.7"]
-dev = ["pytest>=8.0", "pynput>=1.7", "ruff>=0.6"]
+# ui — окна, иконка в трее и горячие клавиши: всё, что видит человек
+ui = ["PySide6-Essentials>=6.6", "pynput>=1.7"]
+dev = ["pytest>=8.0", "pynput>=1.7", "PySide6-Essentials>=6.6", "ruff>=0.6"]
 
 [project.scripts]
 snapreel = "snapreel.cli:main"

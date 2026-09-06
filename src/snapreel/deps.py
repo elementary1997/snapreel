@@ -81,6 +81,17 @@ WF_RECORDER = Requirement(
     },
 )
 
+XCB_CURSOR = Requirement(
+    key="libxcb-cursor",
+    reason="без неё Qt не поднимет окно: с версии 6.5 плагин xcb требует эту библиотеку",
+    packages={
+        "apt": "libxcb-cursor0",
+        "dnf": "xcb-util-cursor",
+        "pacman": "xcb-util-cursor",
+        "zypper": "libxcb-cursor0",
+    },
+)
+
 NOTIFY_SEND = Requirement(
     key="notify-send",
     reason="уведомление о готовом клипе",
@@ -94,10 +105,25 @@ NOTIFY_SEND = Requirement(
 )
 
 
+def _library_present(name: str) -> bool:
+    """Есть ли библиотека в системе: спрашиваем ldconfig, а не гадаем по путям."""
+    if not shutil.which("ldconfig"):
+        return True  # спросить не у кого — не пугаем человека зря
+    try:
+        listing = subprocess.run(
+            ["ldconfig", "-p"], capture_output=True, text=True, errors="replace", timeout=10
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    return name in listing.stdout
+
+
 def required(env: Environment | None = None) -> list[Requirement]:
     """Полный список того, что нужно на этой платформе."""
     env = env or detect()
     items = [FFMPEG, TKINTER]
+    if env.is_linux:
+        items.append(XCB_CURSOR)
     if env.platform is Platform.LINUX_X11:
         items += [XCLIP, NOTIFY_SEND]
     elif env.platform is Platform.LINUX_WAYLAND:
@@ -108,6 +134,9 @@ def required(env: Environment | None = None) -> list[Requirement]:
 def is_satisfied(requirement: Requirement, config: Config | None = None) -> bool:
     if requirement.key == "tkinter":
         return find_spec("tkinter") is not None
+    if requirement.key == "libxcb-cursor":
+        # это библиотека, а не команда: её ищет линковщик, а не PATH
+        return _library_present("libxcb-cursor.so.0")
     if requirement.key == "ffmpeg" and config:
         return bool(shutil.which(config.ffmpeg_path))
     return bool(shutil.which(requirement.key))

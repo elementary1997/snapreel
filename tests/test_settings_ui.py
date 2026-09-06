@@ -1,9 +1,9 @@
 """Само окно настроек: собирается, ловит комбинацию, сохраняет.
 
-Тесты требуют дисплея и потому пропускаются в обычном headless-прогоне. В CI
-их гоняет job `smoke` под Xvfb — иначе окно так и осталось бы непроверенным:
-логику формы держит `test_settings.py`, а вот фокус, привязки и вёрстка живут
-только внутри Tk.
+Qt умеет рисовать в память (`QT_QPA_PLATFORM=offscreen`), поэтому окно
+проверяется в обычном прогоне, без дисплея и без отдельного job в CI. Логику
+формы держит `test_settings.py`, а здесь — то, что живёт только внутри окна:
+захват клавиш, сборка строк, сохранение.
 """
 
 from __future__ import annotations
@@ -14,145 +14,219 @@ import pytest
 
 from snapreel.config import Config
 
-tk = pytest.importorskip("tkinter", reason="без tkinter окна нет")
+pytest.importorskip("PySide6", reason="окна на PySide6")
 
-pytestmark = pytest.mark.gui
+# импорт после importorskip — иначе модуль не соберётся там, где Qt нет
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QKeyEvent
+from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit
+
+
+@pytest.fixture(scope="session")
+def qt_app():
+    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture
-def window(tmp_path):
+def window(qt_app, tmp_path):
     from snapreel.settings_ui import SettingsWindow
 
-    try:
-        widget = SettingsWindow(Config(), tmp_path / "config.toml")
-    except tk.TclError as exc:  # нет дисплея
-        pytest.skip(f"нет дисплея: {exc}")
-    widget.root.withdraw()
+    widget = SettingsWindow(Config(), tmp_path / "config.toml")
     yield widget
-    try:
-        widget.root.destroy()
-    except tk.TclError:
-        pass
+    widget.deleteLater()
+    qt_app.processEvents()
 
 
-def pump(window) -> None:
-    window.root.update_idletasks()
-    window.root.update()
+def press(widget, key: Qt.Key, text: str = "") -> None:
+    widget.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier, text))
 
 
-def press(window, *keysyms: str) -> None:
-    """Нажатия идут в окно, а не в поле: ловит их привязка уровня окна."""
-    window.root.focus_force()
-    for keysym in keysyms:
-        window.root.event_generate(f"<KeyPress-{keysym}>")
-        pump(window)
+def release(widget, key: Qt.Key) -> None:
+    widget.keyReleaseEvent(
+        QKeyEvent(QEvent.Type.KeyRelease, key, Qt.KeyboardModifier.NoModifier, "")
+    )
+
+
+# --- сборка ---------------------------------------------------------------
 
 
 def test_the_window_shows_every_setting(window):
-    pump(window)
-
     assert set(window._widgets) == set(Config.__dataclass_fields__)
+
+
+def test_every_group_gets_its_own_page(window):
+    from snapreel import settings
+
+    assert window.nav.count() == len(settings.GROUPS)
+    assert window.stack.count() == len(settings.GROUPS)
+
+
+def test_choosing_a_section_switches_the_page(window):
+    window.nav.setCurrentRow(2)
+    assert window.stack.currentIndex() == 2
+
+
+# --- захват комбинации ----------------------------------------------------
 
 
 def test_a_pressed_combination_lands_in_the_field(window):
     """Ради этого окно и затевалось: комбинацию нажимают, а не печатают."""
-    window.root.deiconify()
-    pump(window)
     field = window._widgets["hotkey_mp4"]
     field._start()
-    pump(window)
 
-    press(window, "Control_L", "Alt_L", "7")
+    press(field, Qt.Key.Key_Control)
+    press(field, Qt.Key.Key_Alt)
+    press(field, Qt.Key.Key_5, "5")
 
-    assert field.get() == "<ctrl>+<alt>+7"
+    assert field.get() == "<ctrl>+<alt>+5"
 
 
 def test_a_key_without_a_modifier_is_refused_in_place(window):
-    window.root.deiconify()
-    pump(window)
     field = window._widgets["hotkey_mp4"]
     before = field.get()
     field._start()
-    pump(window)
 
-    press(window, "9")
+    press(field, Qt.Key.Key_9, "9")
 
     assert field.get() == before
-    assert "модификатор" in field._label.cget("text")
+    assert "модификатор" in field._label.text()
 
 
-def test_saving_writes_the_config(window, tmp_path):
-    window._widgets["fps"].variable.set("48")
+def test_releasing_a_modifier_forgets_it(window):
+    field = window._widgets["hotkey_mp4"]
+    field._start()
+
+    press(field, Qt.Key.Key_Control)
+    release(field, Qt.Key.Key_Control)
+    press(field, Qt.Key.Key_5, "5")
+
+    # ctrl отпустили до основной клавиши — комбинация вышла без модификатора
+    assert "модификатор" in field._label.text()
+
+
+def test_escape_stops_the_capture(window):
+    field = window._widgets["hotkey_mp4"]
+    before = field.get()
+    field._start()
+
+    press(field, Qt.Key.Key_Escape)
+
+    assert field.get() == before
+    assert field._button.text() == "Изменить"
+
+
+def test_keys_are_ignored_until_the_capture_starts(window):
+    """Иначе окно перестало бы слушаться обычной клавиатуры."""
+    field = window._widgets["hotkey_mp4"]
+    before = field.get()
+
+    press(field, Qt.Key.Key_5, "5")
+
+    assert field.get() == before
+
+
+# --- сохранение -----------------------------------------------------------
+
+
+def test_saving_writes_the_config(window, tmp_path, monkeypatch):
+    from snapreel import autostart
+
+    monkeypatch.setattr(autostart, "install", lambda hotkey, env=None: autostart.Outcome(True, ""))
+    window._widgets["fps"].setText("48")
 
     window._save()
 
-    data = tomllib.loads((tmp_path / "config.toml").read_text(encoding="utf-8"))
-    assert data["fps"] == 48
-    assert window.saved is True
+    saved = tomllib.loads((tmp_path / "config.toml").read_text(encoding="utf-8"))
+    assert saved["fps"] == 48
+    assert window.saved
 
 
 def test_a_bad_value_keeps_the_file_untouched(window, tmp_path):
-    window._widgets["fps"].variable.set("9000")
+    window._widgets["fps"].setText("9000")
 
     window._save()
 
     assert not (tmp_path / "config.toml").exists()
-    assert "1..120" in window._errors["fps"].cget("text")
-    assert window.saved is False
+    assert not window.saved
+    # на месте подсказки теперь ошибка, и подписана она как ошибка
+    assert window._hints["fps"].property("role") == "error"
+    assert "fps" in window._hints["fps"].text()
 
 
-# --- панель обновления -----------------------------------------------------
+def test_a_bad_value_opens_the_section_that_holds_it(window):
+    window.nav.setCurrentRow(window.nav.count() - 1)
+    window._widgets["fps"].setText("9000")
+
+    window._save()
+
+    assert window.nav.currentItem().text() == "Запись"
 
 
-def drain(window, panel, tries: int = 50) -> None:
-    """Крутит цикл окна, пока фоновый поток не доложит о результате."""
-    import time
+def test_switches_and_choices_come_back_as_values(window):
+    window._widgets["capture_cursor"].setValue(False)
+    window._widgets["preset"].setCurrentText("fast")
 
-    for _ in range(tries):
-        pump(window)
-        panel._drain()
-        if str(panel.button.cget("state")) == "normal":
-            return
-        time.sleep(0.02)
+    raw = window._collect()
+
+    assert raw["capture_cursor"] is False
+    assert raw["preset"] == "fast"
+
+
+def test_the_controls_match_the_kinds_of_the_fields(window):
+    from snapreel.settings_ui import DirEdit, HotkeyEdit, Switch
+
+    assert isinstance(window._widgets["hotkey_mp4"], HotkeyEdit)
+    assert isinstance(window._widgets["capture_cursor"], Switch)
+    assert isinstance(window._widgets["preset"], QComboBox)
+    assert isinstance(window._widgets["output_dir"], DirEdit)
+    assert isinstance(window._widgets["ffmpeg"], QLineEdit)
+
+
+# --- панель обновления ----------------------------------------------------
 
 
 def test_the_panel_offers_the_newer_version(window, monkeypatch):
     from snapreel import updates
 
-    release = updates.Release((9, 9, 9), "v9.9.9", "a", "https://d/a", "https://d/s", 1)
+    release = updates.Release((9, 9, 9), "v9.9.9", "asset", "https://d/a", None, 1)
     monkeypatch.setattr(updates, "check", lambda directory, force=False: release)
-    panel = window.updates
 
-    panel.check()
-    drain(window, panel)
+    window.updates.check()
+    _settle(window)
 
-    assert "9.9.9" in panel.button.cget("text")
+    assert "9.9.9" in window.updates.button.text()
 
 
 def test_the_panel_says_when_nothing_is_newer(window, monkeypatch):
     from snapreel import updates
 
     monkeypatch.setattr(updates, "check", lambda directory, force=False: None)
-    panel = window.updates
 
-    panel.check()
-    drain(window, panel)
+    window.updates.check()
+    _settle(window)
 
-    assert "последняя" in panel.status.cget("text")
+    assert "последняя версия" in window.updates.status.text()
 
 
 def test_a_network_failure_stays_inside_the_panel(window, monkeypatch):
-    """Окно настроек не должно падать оттого, что github недоступен."""
     from snapreel import updates
 
-    def boom(directory, force=False):
-        raise updates.UpdateError("не спросить github об обновлениях: нет сети")
+    def fail(directory, force=False):
+        raise updates.UpdateError("не спросить github об обновлениях")
 
-    monkeypatch.setattr(updates, "check", boom)
-    panel = window.updates
+    monkeypatch.setattr(updates, "check", fail)
 
-    panel.check()
-    drain(window, panel)
+    window.updates.check()
+    _settle(window)
 
-    assert "нет сети" in panel.status.cget("text")
-    assert str(panel.button.cget("state")) == "normal"
+    assert "github" in window.updates.status.text()
+
+
+def _settle(window, tries: int = 200) -> None:
+    """Ждёт поток панели обновлений: он отвечает сигналом в главный поток."""
+    app = QApplication.instance()
+    for _ in range(tries):
+        app.processEvents()
+        if window.updates._thread is None and window.updates.button.isEnabled():
+            return
+    raise AssertionError("панель обновлений так и не ответила")

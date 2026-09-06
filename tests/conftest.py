@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
+
+# Qt умеет рисовать в память, и в тестах это единственный допустимый режим:
+# прогон обязан быть headless, а на машине с дисплеем окна иначе всплывали бы
+# поверх работы. Ставится до первого импорта Qt, иначе платформа уже выбрана.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from snapreel import recorder
 from snapreel.config import Config

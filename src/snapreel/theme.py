@@ -1,37 +1,28 @@
-"""Оформление окон snapreel: палитры, шрифты и стили ttk.
+"""Оформление окон snapreel: палитры и таблица стилей Qt.
 
 Палитры две, светлая и тёмная, и по умолчанию берётся та, в которой сидит
 система: светлое окно посреди тёмного рабочего стола выглядит чужой
-программой. О теме спрашивается `platform_info.prefers_dark` — сам tkinter
-про системную тему ничего не знает.
+программой. Тему спрашивает `platform_info.prefers_dark`.
 
-За основу берётся `clam` — единственная встроенная тема ttk, которой можно
-задать цвета целиком. Родные `vista` и `aqua` красивее по-своему, но
-перекрасить их нельзя, и окно выглядело бы в трёх системах тремя разными
-приложениями.
-
-Сам tkinter подтягивается внутри функций: за палитрой сюда ходит и трей, у
-которого своя оконная система, и модуль обязан импортироваться там, где
-tkinter не собран.
+Вид задаётся таблицей стилей (QSS) целиком — от скруглений до цвета рамки в
+фокусе, — чтобы на всех трёх системах окно выглядело одинаково и предсказуемо.
+Сам Qt сюда не импортируется на уровне модуля: за палитрой ходят и тесты, и
+трей, а таблица стилей — обычная строка.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from .platform_info import Environment, prefers_dark
-
-if TYPE_CHECKING:
-    from tkinter import font as tkfont
 
 
 @dataclass(frozen=True)
 class Palette:
     """Цвета окна. Имена — по роли, а не по оттенку: роли у тем общие."""
 
-    bg: str  # фон окна и колонки разделов
-    surface: str  # карточка с полями
+    bg: str  # фон окна
+    surface: str  # панель с содержимым
     field: str  # поле ввода
     border: str
     text: str
@@ -43,50 +34,48 @@ class Palette:
     ok: str
     button: str
     button_hover: str
-    hover: str  # подсветка строки в списке разделов
+    hover: str  # подсветка строки под курсором
     dark: bool
 
 
 LIGHT = Palette(
-    bg="#f3f5f8",
+    bg="#f5f6f8",
     surface="#ffffff",
     field="#ffffff",
-    border="#ccd4e0",
-    text="#1b2028",
-    muted="#6b7684",
+    border="#e2e6ec",
+    text="#12151a",
+    muted="#6b7480",
     accent="#2f6feb",
     accent_hover="#255ac7",
     on_accent="#ffffff",
-    danger="#c62828",
-    ok="#1b7f4b",
-    button="#eaeef5",
-    button_hover="#dde4ee",
-    hover="#e7ecf4",
+    danger="#d13b3b",
+    ok="#177245",
+    button="#eef1f6",
+    button_hover="#e2e7ef",
+    hover="#eef1f6",
     dark=False,
 )
 
 DARK = Palette(
-    bg="#1c1e24",
-    surface="#24272f",
-    field="#1b1e25",
-    border="#353a46",
-    text="#e7eaf0",
-    muted="#98a1b0",
+    bg="#17191d",
+    surface="#1f2228",
+    field="#252931",
+    border="#2e333c",
+    text="#eceef2",
+    muted="#98a0ad",
     accent="#4c8dff",
     accent_hover="#6ba0ff",
-    on_accent="#0f1116",
+    on_accent="#0c0e12",
     danger="#ff6b6b",
     ok="#4ade80",
-    button="#2c313c",
-    button_hover="#343a47",
-    hover="#2a2f3a",
+    button="#282d36",
+    button_hover="#313742",
+    hover="#232830",
     dark=True,
 )
 
-# Шрифты перечислены по предпочтению, а не по платформам: берётся первый
-# установленный. Спрашивать систему через `platform` здесь незачем — важно
-# наличие шрифта, а не имя ОС.
-_FAMILIES = (
+# Шрифт выбирается по наличию, а не по имени системы: важно, что он есть.
+FAMILIES = (
     "Segoe UI Variable Text",
     "Segoe UI",
     "SF Pro Text",
@@ -98,6 +87,8 @@ _FAMILIES = (
     "DejaVu Sans",
 )
 
+RADIUS = 8  # скругление кнопок, полей и строк списка
+
 
 def resolve(mode: str = "auto", env: Environment | None = None) -> Palette:
     """Палитра по настройке: `auto` спрашивает систему, остальное — приказ."""
@@ -108,204 +99,127 @@ def resolve(mode: str = "auto", env: Environment | None = None) -> Palette:
     return DARK if prefers_dark(env) else LIGHT
 
 
-def family(root) -> str:
-    from tkinter import font as tkfont
+def stylesheet(palette: Palette) -> str:
+    """Вид всего окна одной таблицей — так его можно прочитать целиком."""
+    return f"""
+    QWidget {{
+        background: {palette.bg};
+        color: {palette.text};
+        font-size: 10pt;
+    }}
+    /* подписи не красят фон: они лежат и на окне, и на панели, и на строке */
+    QLabel {{ background: transparent; }}
+    QLabel[role="title"] {{ font-size: 14pt; font-weight: 600; padding-bottom: 2px; }}
+    QLabel[role="hint"] {{ color: {palette.muted}; font-size: 9pt; }}
+    QLabel[role="error"] {{ color: {palette.danger}; font-size: 9pt; }}
+    QLabel[role="ok"] {{ color: {palette.ok}; font-size: 9pt; }}
+    QLabel[role="value"] {{ color: {palette.muted}; font-size: 9pt; }}
 
-    available = set(tkfont.families(root))
-    for name in _FAMILIES:
+    QFrame#Sidebar {{ background: {palette.bg}; border: none; }}
+    QFrame#Panel {{
+        background: {palette.surface};
+        border: 1px solid {palette.border};
+        border-radius: {RADIUS + 2}px;
+    }}
+    QFrame#Divider {{ background: {palette.border}; border: none; max-height: 1px; }}
+
+    QListWidget {{
+        background: {palette.bg};
+        border: none;
+        outline: none;
+        padding: 2px;
+    }}
+    QListWidget::item {{
+        padding: 7px 10px;
+        border-radius: {RADIUS}px;
+        color: {palette.muted};
+    }}
+    QListWidget::item:hover {{ background: {palette.hover}; color: {palette.text}; }}
+    QListWidget::item:selected {{
+        background: {palette.surface};
+        color: {palette.accent};
+        font-weight: 600;
+    }}
+
+    QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
+        background: {palette.field};
+        border: 1px solid {palette.border};
+        border-radius: {RADIUS - 2}px;
+        padding: 5px 8px;
+        min-height: 20px;
+        selection-background-color: {palette.accent};
+        selection-color: {palette.on_accent};
+    }}
+    QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {{
+        border-color: {palette.accent};
+    }}
+    QComboBox::drop-down {{ border: none; width: 22px; }}
+    QComboBox QAbstractItemView {{
+        background: {palette.surface};
+        border: 1px solid {palette.border};
+        border-radius: {RADIUS - 2}px;
+        padding: 4px;
+        selection-background-color: {palette.accent};
+        selection-color: {palette.on_accent};
+        outline: none;
+    }}
+    QSpinBox::up-button, QSpinBox::down-button,
+    QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{ width: 16px; border: none; }}
+
+    QPushButton {{
+        background: {palette.button};
+        border: 1px solid {palette.border};
+        border-radius: {RADIUS}px;
+        padding: 6px 14px;
+        min-height: 20px;
+    }}
+    QPushButton:hover {{ background: {palette.button_hover}; }}
+    QPushButton:pressed {{ background: {palette.border}; }}
+    QPushButton:disabled {{ color: {palette.muted}; }}
+    QPushButton[role="accent"] {{
+        background: {palette.accent};
+        border-color: {palette.accent};
+        color: {palette.on_accent};
+        font-weight: 600;
+    }}
+    QPushButton[role="accent"]:hover {{
+        background: {palette.accent_hover};
+        border-color: {palette.accent_hover};
+    }}
+    QPushButton[role="quiet"] {{ background: transparent; border-color: transparent; }}
+    QPushButton[role="quiet"]:hover {{ background: {palette.hover}; }}
+
+    QScrollArea {{ background: {palette.surface}; border: none; }}
+    QScrollArea > QWidget > QWidget {{ background: {palette.surface}; }}
+    QWidget#Page, QWidget#Page > QWidget {{ background: {palette.surface}; }}
+    QWidget#Row {{ background: {palette.surface}; }}
+    QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
+    QScrollBar::handle:vertical {{
+        background: {palette.border};
+        border-radius: 4px;
+        min-height: 28px;
+    }}
+    QScrollBar::handle:vertical:hover {{ background: {palette.muted}; }}
+    QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
+    QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
+
+    QToolTip {{
+        background: {palette.surface};
+        color: {palette.text};
+        border: 1px solid {palette.border};
+        padding: 4px 6px;
+    }}
+    """
+
+
+def apply(app, palette: Palette) -> None:
+    """Красит приложение целиком и выбирает первый установленный шрифт."""
+    from PySide6.QtGui import QFont, QFontDatabase
+
+    available = set(QFontDatabase.families())
+    for name in FAMILIES:
         if name in available:
-            return name
-    return str(tkfont.nametofont("TkDefaultFont").cget("family"))
-
-
-def apply(root, palette: Palette = LIGHT) -> dict[str, tkfont.Font]:
-    """Красит окно и возвращает шрифты, которые пригодятся при вёрстке."""
-    from tkinter import font as tkfont
-    from tkinter import ttk
-
-    name = family(root)
-    fonts = {
-        "base": tkfont.Font(root=root, family=name, size=9),
-        "hint": tkfont.Font(root=root, family=name, size=8),
-        "title": tkfont.Font(root=root, family=name, size=11, weight="bold"),
-        "section": tkfont.Font(root=root, family=name, size=9, weight="bold"),
-        "mono": tkfont.Font(root=root, family=name, size=9, weight="bold"),
-    }
-
-    style = ttk.Style(root)
-    style.theme_use("clam")
-    root.configure(background=palette.bg)
-
-    style.configure(".", background=palette.bg, foreground=palette.text, font=fonts["base"])
-    style.configure("TFrame", background=palette.bg)
-    style.configure("Card.TFrame", background=palette.surface)
-    style.configure("Sidebar.TFrame", background=palette.bg)
-
-    style.configure("TLabel", background=palette.bg, foreground=palette.text)
-    style.configure("Card.TLabel", background=palette.surface, foreground=palette.text)
-    style.configure(
-        "Hint.TLabel", background=palette.surface, foreground=palette.muted, font=fonts["hint"]
-    )
-    style.configure(
-        "Error.TLabel", background=palette.surface, foreground=palette.danger, font=fonts["hint"]
-    )
-    style.configure(
-        "Title.TLabel", background=palette.bg, foreground=palette.text, font=fonts["title"]
-    )
-    style.configure(
-        "CardTitle.TLabel",
-        background=palette.surface,
-        foreground=palette.text,
-        font=fonts["title"],
-    )
-    style.configure(
-        "Status.TLabel", background=palette.bg, foreground=palette.muted, font=fonts["hint"]
-    )
-    style.configure(
-        "StatusOk.TLabel", background=palette.bg, foreground=palette.ok, font=fonts["hint"]
-    )
-    style.configure(
-        "StatusBad.TLabel", background=palette.bg, foreground=palette.danger, font=fonts["hint"]
-    )
-    style.configure(
-        "Combo.TLabel", background=palette.surface, foreground=palette.text, font=fonts["mono"]
-    )
-
-    # Плоские поля: рамка в один цвет вместо вдавленного бордюра `clam`
-    style.configure(
-        "TEntry",
-        fieldbackground=palette.field,
-        background=palette.field,
-        foreground=palette.text,
-        bordercolor=palette.border,
-        lightcolor=palette.border,
-        darkcolor=palette.border,
-        insertcolor=palette.text,
-        padding=4,
-        relief="flat",
-    )
-    style.map(
-        "TEntry", bordercolor=[("focus", palette.accent)], lightcolor=[("focus", palette.accent)]
-    )
-
-    style.configure(
-        "TCombobox",
-        fieldbackground=palette.field,
-        background=palette.button,
-        foreground=palette.text,
-        bordercolor=palette.border,
-        lightcolor=palette.border,
-        darkcolor=palette.border,
-        arrowcolor=palette.muted,
-        selectbackground=palette.field,
-        selectforeground=palette.text,
-        padding=3,
-    )
-    # `clam` держит для readonly свою карту цветов, и без перекрытия поле
-    # выбора остаётся светло-бежевым — в тёмной теме на нём не прочитать текст
-    style.map(
-        "TCombobox",
-        bordercolor=[("focus", palette.accent)],
-        fieldbackground=[("readonly", palette.field), ("disabled", palette.bg)],
-        foreground=[("readonly", palette.text), ("disabled", palette.muted)],
-        background=[("readonly", palette.button), ("active", palette.button_hover)],
-        selectbackground=[("readonly", palette.field)],
-        selectforeground=[("readonly", palette.text)],
-        arrowcolor=[("readonly", palette.muted)],
-    )
-    # выпадающий список у комбобокса — не ttk-виджет, красится опциями Tk
-    root.option_add("*TCombobox*Listbox.background", palette.field)
-    root.option_add("*TCombobox*Listbox.foreground", palette.text)
-    root.option_add("*TCombobox*Listbox.selectBackground", palette.accent)
-    root.option_add("*TCombobox*Listbox.selectForeground", palette.on_accent)
-
-    style.configure(
-        "TButton",
-        background=palette.button,
-        foreground=palette.text,
-        bordercolor=palette.border,
-        # светлая и тёмная грани тоже красятся в цвет рамки: иначе на карточке
-        # кнопка сливается с фоном и выглядит просто текстом
-        lightcolor=palette.border,
-        darkcolor=palette.border,
-        focuscolor=palette.border,
-        padding=(10, 4),
-        relief="flat",
-    )
-    style.map(
-        "TButton",
-        background=[("pressed", palette.border), ("active", palette.button_hover)],
-        bordercolor=[("active", palette.accent)],
-    )
-
-    # Кнопка внутри карточки: роль та же, фон под ней другой
-    style.configure(
-        "Card.TButton",
-        background=palette.button,
-        foreground=palette.text,
-        bordercolor=palette.border,
-        lightcolor=palette.border,
-        darkcolor=palette.border,
-        focuscolor=palette.border,
-        padding=(8, 3),
-        relief="flat",
-    )
-    style.map(
-        "Card.TButton",
-        background=[("pressed", palette.border), ("active", palette.button_hover)],
-        bordercolor=[("active", palette.accent)],
-    )
-
-    style.configure(
-        "Accent.TButton",
-        background=palette.accent,
-        foreground=palette.on_accent,
-        bordercolor=palette.accent,
-        lightcolor=palette.accent,
-        darkcolor=palette.accent,
-        focuscolor=palette.accent,
-        padding=(12, 4),
-        relief="flat",
-    )
-    style.map(
-        "Accent.TButton",
-        background=[("pressed", palette.accent_hover), ("active", palette.accent_hover)],
-        bordercolor=[("active", palette.accent_hover)],
-        foreground=[("disabled", palette.muted)],
-    )
-
-    # Разделы слева: строка без рамки, выбранная подсвечена цветом карточки
-    style.configure(
-        "Side.TButton",
-        background=palette.bg,
-        foreground=palette.muted,
-        bordercolor=palette.bg,
-        lightcolor=palette.bg,
-        darkcolor=palette.bg,
-        focuscolor=palette.bg,
-        padding=(10, 5),
-        anchor="w",
-        relief="flat",
-    )
-    style.map(
-        "Side.TButton",
-        background=[("active", palette.hover)],
-        foreground=[("active", palette.text)],
-    )
-    style.configure(
-        "SideActive.TButton",
-        background=palette.surface,
-        foreground=palette.accent,
-        bordercolor=palette.surface,
-        lightcolor=palette.surface,
-        darkcolor=palette.surface,
-        focuscolor=palette.surface,
-        padding=(10, 5),
-        anchor="w",
-        font=fonts["section"],
-        relief="flat",
-    )
-    style.map("SideActive.TButton", background=[("active", palette.surface)])
-
-    style.configure("Card.TSeparator", background=palette.border)
-    return fonts
+            app.setFont(QFont(name, 10))
+            break
+    app.setStyle("Fusion")  # единственный стиль Qt, который красится целиком
+    app.setStyleSheet(stylesheet(palette))

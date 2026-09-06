@@ -4,14 +4,13 @@
 и раз в сутки спрашивает github о новой версии. Настройки открываются из его
 меню — по желанию, а не при запуске.
 
-Сам трей **не создаёт ни одного окна**: и запись, и настройки он запускает
-отдельными процессами (`snapreel record`, `snapreel settings`). Причина не в
-чистоте, а в главном потоке: цикл событий pystray на macOS обязан идти в нём,
-и Tk требует того же. Двум главным потокам не разойтись, а два процесса
-расходятся сами. Заодно упавшая запись не уносит с собой иконку.
+Окна настроек и установки открываются прямо здесь: у Qt цикл событий один на
+всё приложение, и вкладывать в него диалог — обычное дело. А вот запись
+по-прежнему идёт отдельным процессом (`snapreel record`): у неё свой оверлей,
+свой ffmpeg и своё право упасть, не утащив с собой иконку.
 
-`pystray` ставится экстрой `.[tray]` и подтягивается лениво: без него обязаны
-работать и `doctor`, и запись по хоткею (ADR-0008).
+Qt ставится экстрой `.[ui]` и подтягивается лениво: без него обязаны работать
+и `doctor`, и запись по хоткею (ADR-0009).
 """
 
 from __future__ import annotations
@@ -26,7 +25,7 @@ from pathlib import Path
 from . import autostart, notify, resources, updates
 from . import config as config_module
 from .config import Config
-from .errors import TrayUnavailable
+from .errors import OverlayUnavailable, TrayUnavailable
 from .platform_info import Environment, detect
 
 # Первая проверка обновлений — не сразу: вход в систему и без нас занят.
@@ -34,18 +33,14 @@ from .platform_info import Environment, detect
 # `updates.check` по своей отметке в updates.json.
 FIRST_CHECK = 60.0
 CHECK_TICK = 3600.0
-# Сколько ждать, прежде чем сказать, что иконки не видно. Столько же длится
-# терпение к медленной сессии: в автозапуске трей-менеджер поднимается не
-# первым, и pystray встанет в него сам, как только тот появится.
-DOCK_TIMEOUT = 15.0
 
 
 @dataclass(frozen=True)
 class Item:
     """Пункт меню как данные.
 
-    Меню строится отдельно от pystray, чтобы его можно было проверить тестом
-    в headless-окружении, где никакого трея нет.
+    Меню строится отдельно от Qt, чтобы его можно было проверить тестом в
+    headless-окружении, где никакого трея нет.
     """
 
     key: str
@@ -78,7 +73,7 @@ class TrayApp:
         self._launch = launcher or _spawn
         self._notify = notifier or (lambda title, message: notify.send(title, message, self.env))
         self._recording: subprocess.Popen | None = None
-        self._settings: subprocess.Popen | None = None
+        self._window_open = False  # окно настроек открыто прямо здесь
         self._listener = None
         self._release: updates.Release | None = None
         self._icon = None
@@ -93,7 +88,8 @@ class TrayApp:
 
     @property
     def settings_open(self) -> bool:
-        return _alive(self._settings)
+        """Открыто ли окно настроек — второе такое же заводить незачем."""
+        return self._window_open
 
     @property
     def release(self) -> updates.Release | None:
@@ -141,18 +137,19 @@ class TrayApp:
         return tuple(items)
 
     def attach(self, icon) -> None:
-        """Связывает состояние с живой иконкой pystray."""
+        """Связывает состояние с живой иконкой в трее."""
         self._icon = icon
 
     def refresh(self) -> None:
-        """Просит pystray перечитать меню, иконку и подсказку."""
+        """Просит трей перечитать меню, иконку и подсказку.
+
+        Зовётся и из фоновых потоков, поэтому сама ничего не рисует: иконка
+        лишь получает сигнал, а перерисовывается в главном потоке.
+        """
         icon = self._icon
         if icon is None:
             return
         try:
-            icon.menu = build_menu(self)
-            icon.icon = image(self.recording)
-            icon.title = self.title()
             icon.update_menu()
         except Exception:  # трей живёт дальше даже с прежним меню
             pass
@@ -178,16 +175,25 @@ class TrayApp:
     # --- настройки -------------------------------------------------------
 
     def open_settings(self) -> None:
-        """Открывает окно настроек, а по его закрытию перечитывает конфиг."""
-        if self.settings_open:
+        """Открывает окно настроек и по его закрытию перечитывает конфиг.
+
+        Окно живёт в этом же процессе: цикл событий Qt один на приложение, и
+        диалог просто вкладывается в него. Запись — другое дело, она уходит
+        отдельным процессом.
+        """
+        if self._window_open:
             return
-        try:
-            self._settings = self._launch(autostart.argv_for("settings", config=self.config_path))
-        except OSError as exc:
-            self._notify("snapreel", f"не открыть настройки: {exc}")
-            return
+        self._window_open = True
         self.refresh()
-        self._watch(self._settings, self.reload)
+        try:
+            from .settings_ui import open_settings
+
+            open_settings(self.config, self.config_path)
+        except Exception as exc:  # окно не должно уносить с собой иконку
+            self._notify("snapreel", f"не открыть настройки: {exc}")
+        finally:
+            self._window_open = False
+        self.reload()
 
     def reload(self) -> None:
         """Подхватывает изменённый конфиг: комбинации могли стать другими."""
@@ -298,30 +304,6 @@ class TrayApp:
 
     # --- жизненный цикл --------------------------------------------------
 
-    def watch_dock(self, timeout: float = DOCK_TIMEOUT) -> None:
-        """Говорит вслух, если иконка так и не появилась.
-
-        В X11 без менеджера трея pystray не бросает исключение: он пишет
-        «Failed to dock icon» себе в лог и продолжает крутить цикл событий.
-        Снаружи это выглядит как повисший без следа процесс, поэтому причину
-        объясняем сами. Процесс при этом живёт: трей может появиться позже.
-        """
-
-        def watch() -> None:
-            if self._stopping.wait(timeout):
-                return
-            if visible(self._icon):
-                return
-            print(
-                "snapreel: иконка не появилась — в этой сессии нет системного трея. "
-                "В GNOME его добавляет расширение AppIndicator; в Wayland без него "
-                "остаются системный хоткей и `snapreel record`. "
-                "Как только трей появится, иконка встанет сама.",
-                file=sys.stderr,
-            )
-
-        self._threads.append(_start(watch))
-
     def greet(self) -> None:
         """Здоровается, если конфига ещё нет.
 
@@ -360,129 +342,46 @@ class TrayApp:
         self._threads.append(_start(wait))
 
 
-# --- pystray --------------------------------------------------------------
+# --- Qt -------------------------------------------------------------------
 
 
-def image(recording: bool = False, size: int = 64):
+def icon(recording: bool = False):
     """Иконка трея: рамка выделения с точкой записи, красная во время записи.
 
     Берётся готовый файл из пакета (`scripts/make-icon.py` рисует его один
-    раз): в трее иконка видна размером с букву, и нарисованная под каждый
-    размер она читается, а уменьшенная на лету — нет. Файла может не быть в
-    урезанной сборке, и тогда рисуется простой кружок: без иконки трей всё
-    равно должен подняться.
+    раз, каждый размер отдельно): в трее иконка видна размером с букву, и
+    уменьшенная на лету она превращается в пятно. Файла может не быть в
+    урезанной сборке — тогда иконка пустая, но трей всё равно поднимется.
     """
-    try:
-        from PIL import Image, ImageDraw
-    except ImportError as exc:  # pragma: no cover — вместе с pystray
-        raise TrayUnavailable("нужен Pillow: pip install 'snapreel[tray]'") from exc
+    from PySide6.QtGui import QIcon
 
     path = resources.icon(recording)
-    if path is not None:
-        try:
-            return Image.open(path).convert("RGBA").resize((size, size), Image.LANCZOS)
-        except OSError:
-            pass  # файл на месте, но не читается — рисуем запасной
-
-    picture = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    pen = ImageDraw.Draw(picture)
-    edge = size // 8
-    pen.ellipse(
-        (edge, edge, size - edge, size - edge),
-        fill="#d63c3c" if recording else "#2f6feb",
-    )
-    inner = size // 3
-    pen.ellipse((inner, inner, size - inner, size - inner), fill="#ffffff")
-    return picture
+    return QIcon(str(path)) if path is not None else QIcon()
 
 
-def systray_manager_present() -> bool | None:
-    """Есть ли в X11-сессии менеджер трея. None — спросить не у кого.
+def fill_menu(menu, items) -> None:
+    """Переносит наши пункты в QMenu.
 
-    Владелец селекции `_NET_SYSTEM_TRAY_S<экран>` и есть тот, кто принимает
-    иконки. Спрашиваем оконную систему напрямую: pystray об этом не скажет.
+    Меню пересобирается целиком на каждое изменение: пунктов меньше десятка,
+    а следить за состоянием каждого — лишний источник рассинхронизации.
     """
-    try:
-        from Xlib import X, display
-    except ImportError:
-        return None
-    try:
-        connection = display.Display()
-    except Exception:  # дисплея нет или он не отвечает
-        return None
-    try:
-        selection = connection.intern_atom(f"_NET_SYSTEM_TRAY_S{connection.get_default_screen()}")
-        return connection.get_selection_owner(selection) != X.NONE
-    except Exception:
-        return None
-    finally:
-        try:
-            connection.close()
-        except Exception:
-            pass
-
-
-def visible(icon) -> bool:
-    """Видно ли иконку на самом деле.
-
-    `icon.visible` у pystray означает только «мы попросили её показать»: в X11
-    без менеджера трея он остаётся True, а иконки нет. Поэтому у X11-бэкенда
-    переспрашиваем саму оконную систему, а остальным верим на слово — у них
-    свои механизмы, и ложная тревога хуже молчания.
-    """
-    if icon is None or not getattr(icon, "visible", False):
-        return False
-    if not type(icon).__module__.endswith("_xorg"):
-        return True
-    return systray_manager_present() is not False
-
-
-def _pystray():
-    """Импорт pystray — он и есть та часть, которая падает без сессии.
-
-    Бэкенд выбирается прямо на импорте, поэтому в графической сессии, до
-    которой не достучаться, наружу летит не `ImportError`, а ошибка оконной
-    системы. Команде `tray` полагается объяснить любую такую неудачу, а не ту
-    единственную, тип которой угадали заранее.
-    """
-    try:
-        import pystray
-    except ModuleNotFoundError as exc:
-        raise TrayUnavailable(
-            "нет pystray — иконку в трее показать нечем. Поставьте: pip install 'snapreel[tray]'"
-        ) from exc
-    except Exception as exc:
-        raise TrayUnavailable(f"не поднять иконку в трее: {exc}") from exc
-    return pystray
-
-
-def build_menu(app: TrayApp):
-    """Переводит наши пункты в меню pystray."""
-    import pystray
-
-    entries = []
-    for item in app.menu():
+    menu.clear()
+    for item in items:
         if item.separator:
-            entries.append(pystray.Menu.SEPARATOR)
+            menu.addSeparator()
             continue
-        entries.append(
-            pystray.MenuItem(
-                item.label,
-                _handler(item.action),
-                # pystray спрашивает состояние функцией, а не значением:
-                # значение он бы запомнил на момент сборки меню
-                checked=None if item.checked is None else (lambda _item, value=item.checked: value),
-                enabled=item.enabled,
-                default=item.default,
-            )
-        )
-    return pystray.Menu(*entries)
+        action = menu.addAction(item.label)
+        action.setEnabled(item.enabled)
+        if item.checked is not None:
+            action.setCheckable(True)
+            action.setChecked(item.checked)
+        action.triggered.connect(_handler(item.action))
 
 
 def _handler(action: Callable[[], None] | None):
     """Оборачивает действие: сбой пункта меню не должен гасить иконку."""
 
-    def call(_icon=None, _item=None) -> None:
+    def call(*_args) -> None:
         if action is None:
             return
         try:
@@ -495,26 +394,82 @@ def _handler(action: Callable[[], None] | None):
 
 def run(config: Config, path: Path | None = None, env: Environment | None = None) -> int:
     """Показывает иконку и не возвращается, пока её не попросят исчезнуть."""
-    pystray = _pystray()
-    app = TrayApp(config, path, env)
-    try:
-        icon = pystray.Icon("snapreel", icon=image(), title=app.title())
-    except Exception as exc:  # у каждого бэкенда свои беды
-        raise TrayUnavailable(f"не создать иконку в трее: {exc}") from exc
+    from PySide6.QtCore import QObject, Qt, Signal
+    from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
-    app.attach(icon)
-    icon.menu = build_menu(app)
+    from .qt import application
+
+    try:
+        qt_app, _ = application(config)
+    except OverlayUnavailable as exc:
+        raise TrayUnavailable(str(exc)) from exc
+
+    app = TrayApp(config, path, env)
+
+    class _Bridge(QObject):
+        """Мост из фоновых потоков в главный.
+
+        Qt, как и любой тулкит, не разрешает трогать виджеты из чужого
+        потока. Проверка обновлений и ожидание записи живут в потоках, а
+        меню и иконку меняет только главный — через этот сигнал.
+        """
+
+        changed = Signal()
+
+    bridge = _Bridge()
+    menu = QMenu()
+    icon_widget = QSystemTrayIcon(icon())
+
+    def rebuild() -> None:
+        fill_menu(menu, app.menu())
+        icon_widget.setIcon(icon(app.recording))
+        icon_widget.setToolTip(app.title())
+
+    bridge.changed.connect(rebuild, Qt.ConnectionType.QueuedConnection)
+    app.attach(_Icon(bridge, qt_app))
+
+    rebuild()
+    icon_widget.setContextMenu(menu)
+    icon_widget.activated.connect(
+        lambda reason: (
+            app.open_settings() if reason == QSystemTrayIcon.ActivationReason.Trigger else None
+        )
+    )
+    icon_widget.show()
+
+    if not QSystemTrayIcon.isSystemTrayAvailable():
+        # иконки в этой сессии не будет, но процесс имеет смысл: хоткеи
+        # работают, а трей может появиться позже — Qt встанет в него сам
+        print(
+            "snapreel: иконка не появилась — в этой сессии нет системного трея. "
+            "В GNOME его добавляет расширение AppIndicator; без него остаются "
+            "системный хоткей и `snapreel record`.",
+            file=sys.stderr,
+        )
+
     app.bind_hotkeys()
     app.watch_updates()
-    app.watch_dock()
     app.greet()
     try:
-        icon.run()
-    except Exception as exc:
-        raise TrayUnavailable(f"трей не запустился: {exc}") from exc
+        qt_app.exec()
     finally:
         app.quit()
     return 0
+
+
+class _Icon:
+    """То, что `TrayApp` считает иконкой: обновить меню и погасить приложение."""
+
+    def __init__(self, bridge, qt_app):
+        self._bridge = bridge
+        self._app = qt_app
+        self.visible = True
+
+    def update_menu(self) -> None:
+        self._bridge.changed.emit()
+
+    def stop(self) -> None:
+        self._app.quit()
 
 
 # --- мелочи ---------------------------------------------------------------
