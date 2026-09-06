@@ -60,11 +60,15 @@ filters="scale,fps,format,split,palettegen,paletteuse,crop,null,anull,aresample,
 extra=()
 case "$platform" in
     linux)
-        indevs="xcbgrab,alsa"
-        devices="x11grab alsa"
-        # автоопределение библиотек выключено, значит зависимости устройств
-        # перечисляются руками: xcb — это x11grab, alsa — звук
-        extra+=(--enable-libxcb --enable-alsa)
+        indevs="xcbgrab,pulse"
+        # звук на Linux snapreel пишет через pulse (см. backends/linux.py),
+        # alsa здесь не нужна
+        devices="x11grab pulse"
+        # автоопределение библиотек выключено, поэтому каждая зависимость
+        # называется явно. xcb — это сам x11grab; xfixes рисует курсор, без
+        # него `capture_cursor` молча ничего не делает; shm ускоряет захват
+        extra+=(--enable-libxcb --enable-libxcb-shm --enable-libxcb-xfixes --enable-libpulse)
+        build_flags="--enable-libxcb-xfixes --enable-libxcb-shm"
         ;;
     macos)
         indevs="avfoundation"
@@ -153,32 +157,60 @@ strip "$out/ffmpeg$exe" 2>/dev/null || true
 
 # --- проверка собранного --------------------------------------------------
 #
-# Список возможностей задаётся при сборке, поэтому опечатка в нём не всплывёт
-# ни на компиляции, ни на тестах — только у пользователя посреди записи.
+# Опечатка внутри перечисления через запятую не вызывает у configure даже
+# предупреждения: неизвестное имя просто ничего не включает. Ни компиляция, ни
+# тесты этого не заметят — заметит пользователь посреди записи. Поэтому здесь
+# спрашивается каждое имя из тех же списков, которыми собирали: сверять список
+# с укороченной копией себя бессмысленно.
 missing=()
-have() {
-    "$out/ffmpeg$exe" -hide_banner -loglevel error "$@" 2>/dev/null
-}
-check() {
-    local kind="$1" name="$2" listing="$3"
-    if ! have "-$listing" | grep -q "[[:space:]]$name[[:space:]]"; then
-        missing+=("$kind $name")
-    fi
+
+ask() {
+    local kind="$1" name="$2" answer
+    # без трубы: `| head -1` закрывает её раньше, чем ffmpeg допишет вывод, и
+    # под `pipefail` весь конвейер отдаёт 141 — скрипт падал бы на успешной
+    # проверке. Первая строка отрезается прямо в оболочке
+    answer="$("$out/ffmpeg$exe" -hide_banner -h "$kind=$name" 2>&1)"
+    answer="${answer%%$'\n'*}"
+    case "$answer" in
+        Unknown* | *"is not recognized"*) missing+=("$kind $name") ;;
+    esac
 }
 
-check кодировщик libx264 encoders
-check кодировщик gif encoders
-check кодировщик aac encoders
-check декодер h264 decoders
-check мультиплексор mp4 muxers
-check мультиплексор gif muxers
-for name in scale fps split palettegen paletteuse crop; do
-    check фильтр "$name" filters
-done
+ask_list() {
+    local kind="$1" names
+    IFS=',' read -ra names <<< "$2"
+    for name in "${names[@]}"; do
+        ask "$kind" "$name"
+    done
+}
+
+ask_list encoder "$encoders"
+ask_list decoder "$decoders"
+ask_list muxer "$muxers"
+ask_list demuxer "$demuxers"
+ask_list protocol "$protocols"
+ask_list filter "$filters"
+
+# Устройства ffmpeg показывает демультиплексорами, и в команде они зовутся не
+# так, как компонент в configure: `-f x11grab` обеспечивает `xcbgrab`. Поэтому
+# спрашиваются именно те имена, которые снаприл пишет в команду.
 for name in $devices; do
-    if ! have -devices | grep -q "[[:space:]]$name[[:space:]]"; then
-        missing+=("устройство $name")
-    fi
+    ask demuxer "$name"
+done
+
+# Парсеры проверить нечем: ни `-parsers`, ни `-h parser=` у ffmpeg нет.
+
+# Кое-что не показывается ни в одном перечне и видно только в строке сборки.
+# Курсор в записи X11 рисует libxcb-xfixes: без него `capture_cursor` молча
+# ничего не делает, а список устройств выглядит целым. Строка сборки говорит
+# о запрошенном, но при выключенном автоопределении незакрытая зависимость
+# роняет configure, поэтому запрошенное здесь равно полученному.
+buildconf="$("$out/ffmpeg$exe" -hide_banner -buildconf 2>/dev/null)"
+for flag in ${build_flags:-}; do
+    case "$buildconf" in
+        *"$flag"*) ;;
+        *) missing+=("флаг сборки $flag") ;;
+    esac
 done
 
 if [ "${#missing[@]}" -ne 0 ]; then

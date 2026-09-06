@@ -46,7 +46,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y nasm xvfb \
-            libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev libasound2-dev
+            libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev libpulse-dev
 
       - name: FFmpeg build deps (macOS)
         if: runner.os == 'macOS'
@@ -115,8 +115,13 @@ jobs:
           esac
 
           # ffmpeg лежит внутри бинарника, а не в PATH: doctor обязан найти его
-          # там же, где его будет искать запись
-          if "$bin" doctor | grep -E '^ffmpeg .*НЕ НАЙДЕН'; then
+          # там же, где его будет искать запись. Вывод берётся отдельно: под
+          # `-o pipefail` код doctor (а он вправе быть ненулевым, окружение
+          # раннера неполное) перебил бы результат grep, и проверка молчала бы
+          # всегда
+          "$bin" doctor > doctor.txt || true
+          cat doctor.txt
+          if grep -qE '^ffmpeg +НЕ НАЙДЕН' doctor.txt; then
             echo "вшитый ffmpeg не нашёлся"; exit 1
           fi
 
@@ -170,7 +175,8 @@ jobs:
         run: |
           gh release create "${{ github.ref_name }}" \
             --title "snapreel ${{ github.ref_name }}" \
-            --notes "Готовые бинарники. Отдельно нужен ffmpeg в PATH — поставит \`snapreel setup\`.
+            --notes "Готовые бинарники: ffmpeg внутри, ставить отдельно ничего не нужно.
+          На Linux остаются системные утилиты буфера обмена — \`snapreel setup\` покажет команду.
 
           macOS: бинарник не подписан, при первом запуске снимите карантин:
           \`xattr -d com.apple.quarantine ./snapreel-macos-*\`
