@@ -8,6 +8,7 @@ import pytest
 
 from snapreel import tray
 from snapreel.config import Config
+from snapreel.errors import TrayUnavailable
 from snapreel.platform_info import Environment, Platform
 from snapreel.updates import Release, UpdateError
 
@@ -452,3 +453,64 @@ def test_an_unparsable_hotkey_comes_out_as_our_own_error(tmp_path, need):
         listen(config, lambda as_gif: None, ENV)
 
     assert "не разобрать" in str(failure.value)
+
+
+def test_the_child_processes_read_the_same_config(tray_app):
+    """Окно настроек должно сохранять туда, откуда трей потом перечитает."""
+    path = str(tray_app.app.config_path)
+
+    tray_app.app.record()
+    tray_app.app.open_settings()
+    tray_app.app.join()
+
+    for argv in tray_app.launched:
+        assert "--config" in argv
+        assert argv[argv.index("--config") + 1] == path
+
+
+def test_a_default_config_adds_no_flag(tmp_path):
+    """Без явного `--config` дочерний процесс сам найдёт стандартный файл."""
+    launched = []
+    app = tray.TrayApp(Config(), None, ENV, launcher=lambda argv: launched.append(list(argv)))
+
+    app.record()
+    app.join()
+
+    assert "--config" not in launched[0]
+
+
+def test_an_unreachable_display_comes_out_as_our_own_error(monkeypatch):
+    """Без графической сессии pystray падает не ImportError, а ошибкой Xlib."""
+    import builtins
+
+    real = builtins.__import__
+
+    def refuse(name, *args, **kwargs):
+        if name == "pystray":
+            raise RuntimeError('Bad display name ""')
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse)
+
+    with pytest.raises(TrayUnavailable) as failure:
+        tray._pystray()
+
+    assert "Bad display name" in str(failure.value)
+
+
+def test_a_missing_pystray_names_the_extra(monkeypatch):
+    import builtins
+
+    real = builtins.__import__
+
+    def absent(name, *args, **kwargs):
+        if name == "pystray":
+            raise ModuleNotFoundError("No module named 'pystray'")
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", absent)
+
+    with pytest.raises(TrayUnavailable) as failure:
+        tray._pystray()
+
+    assert "snapreel[tray]" in str(failure.value)

@@ -155,21 +155,27 @@ def is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
 
 
-def argv_for(*arguments: str) -> list[str]:
+def argv_for(*arguments: str, config: Path | None = None) -> list[str]:
     """Команда запуска snapreel с подкомандой — для системы, а не для шелла.
 
     В обычной установке это `<python> -m snapreel ...`, а в собранном
     бинарнике модуля `snapreel` для интерпретатора не существует — там сам
     исполняемый файл принимает подкоманду.
+
+    `config` дописывается тем, кто запускает snapreel из snapreel: трей отдаёт
+    дочернему процессу тот же файл настроек, который читает сам, иначе окно
+    настроек сохранит правки не туда, откуда их потом перечитают.
     """
+    prefix = ["--config", str(config)] if config is not None else []
     if is_frozen():
-        return [sys.executable, *arguments]
-    return [_windowless_python(), "-m", "snapreel", *arguments]
+        return [sys.executable, *prefix, *arguments]
+    return [_windowless_python(), "-m", "snapreel", *prefix, *arguments]
 
 
-def launch_argv(as_gif: bool = False) -> list[str]:
+def launch_argv(as_gif: bool = False, config: Path | None = None) -> list[str]:
     """Команда, которую вешаем на хоткей."""
-    return argv_for("record", "--gif") if as_gif else argv_for("record")
+    arguments = ("record", "--gif") if as_gif else ("record",)
+    return argv_for(*arguments, config=config)
 
 
 def tray_argv() -> list[str]:

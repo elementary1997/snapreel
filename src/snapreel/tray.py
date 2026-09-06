@@ -165,7 +165,7 @@ class TrayApp:
             self._notify("snapreel", "запись уже идёт")
             return
         try:
-            self._recording = self._launch(autostart.launch_argv(as_gif))
+            self._recording = self._launch(autostart.launch_argv(as_gif, config=self.config_path))
         except OSError as exc:
             self._notify("snapreel", f"не запустить запись: {exc}")
             return
@@ -182,7 +182,7 @@ class TrayApp:
         if self.settings_open:
             return
         try:
-            self._settings = self._launch(autostart.argv_for("settings"))
+            self._settings = self._launch(autostart.argv_for("settings", config=self.config_path))
         except OSError as exc:
             self._notify("snapreel", f"не открыть настройки: {exc}")
             return
@@ -412,6 +412,25 @@ def visible(icon) -> bool:
     return systray_manager_present() is not False
 
 
+def _pystray():
+    """Импорт pystray — он и есть та часть, которая падает без сессии.
+
+    Бэкенд выбирается прямо на импорте, поэтому в графической сессии, до
+    которой не достучаться, наружу летит не `ImportError`, а ошибка оконной
+    системы. Команде `tray` полагается объяснить любую такую неудачу, а не ту
+    единственную, тип которой угадали заранее.
+    """
+    try:
+        import pystray
+    except ModuleNotFoundError as exc:
+        raise TrayUnavailable(
+            "нет pystray — иконку в трее показать нечем. Поставьте: pip install 'snapreel[tray]'"
+        ) from exc
+    except Exception as exc:
+        raise TrayUnavailable(f"не поднять иконку в трее: {exc}") from exc
+    return pystray
+
+
 def build_menu(app: TrayApp):
     """Переводит наши пункты в меню pystray."""
     import pystray
@@ -451,13 +470,7 @@ def _handler(action: Callable[[], None] | None):
 
 def run(config: Config, path: Path | None = None, env: Environment | None = None) -> int:
     """Показывает иконку и не возвращается, пока её не попросят исчезнуть."""
-    try:
-        import pystray
-    except ImportError as exc:
-        raise TrayUnavailable(
-            "нет pystray — иконку в трее показать нечем. Поставьте: pip install 'snapreel[tray]'"
-        ) from exc
-
+    pystray = _pystray()
     app = TrayApp(config, path, env)
     try:
         icon = pystray.Icon("snapreel", icon=image(), title=app.title())
