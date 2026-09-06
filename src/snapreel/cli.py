@@ -83,6 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
     daemon.add_argument("--hotkey", help="комбинация для MP4 (по умолчанию из конфига)")
     daemon.add_argument("--hotkey-gif", help="комбинация для GIF")
 
+    sub.add_parser("settings", help="окно настроек: хоткеи, качество, каталог клипов")
     sub.add_parser("doctor", help="проверить окружение и внешние зависимости")
     sub.add_parser("config", help="напечатать конфиг со значениями по умолчанию")
 
@@ -96,7 +97,8 @@ def main(argv: list[str] | None = None) -> int:
     _make_output_printable()
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command is None:
+    bare = args.command is None
+    if bare:
         # Голый `snapreel` — это `snapreel record`: так его запускают двойным
         # щелчком по бинарнику. Подкоманда дописывается и разбирается заново,
         # а не подставляется строкой: без разбора в Namespace нет флагов
@@ -114,6 +116,8 @@ def main(argv: list[str] | None = None) -> int:
     if command == "config":
         print(config_module.dump_default_toml(), end="")
         return 0
+    if command == "settings":
+        return _settings(cfg, args.config)
     if command == "doctor":
         return _doctor(cfg)
     if command == "setup":
@@ -130,7 +134,40 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if command == "daemon":
         return _daemon(cfg, args)
+    if bare and _first_run(args.config) and _settings(cfg, args.config) == 0:
+        # Первый запуск чаще всего двойной щелчок по скачанному файлу. Начать
+        # с записи экрана человеку, который ещё ничего не настроил, — значит
+        # оставить его без единого способа добраться до настроек без терминала.
+        # Явную `record` это не касается: попросили записать — записываем.
+        return 0
     return _record(cfg, args)
+
+
+# --- настройки ------------------------------------------------------------
+
+
+def _first_run(path: Path | None) -> bool:
+    return not (path or config_module.config_path()).is_file()
+
+
+def _settings(cfg: Config, path: Path | None) -> int:
+    """Окно настроек; без tkinter объясняет, чем его заменить."""
+    from .errors import OverlayUnavailable
+
+    try:
+        from .settings_ui import open_settings
+    except ImportError as exc:  # tkinter есть не в каждой сборке Python
+        print(f"{PROG}: не открыть окно настроек: {exc}", file=sys.stderr)
+        print("Настройте через `snapreel hotkey set` или правкой конфига.", file=sys.stderr)
+        return 2
+
+    try:
+        saved = open_settings(cfg, path)
+    except OverlayUnavailable as exc:
+        print(f"{PROG}: {exc}", file=sys.stderr)
+        return 2
+    print("настройки сохранены" if saved else "настройки не менялись")
+    return 0
 
 
 # --- запись ---------------------------------------------------------------
