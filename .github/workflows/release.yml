@@ -151,40 +151,40 @@ jobs:
 
       - name: First run without a config
         if: runner.os == 'Linux'
-        shell: bash
+        env:
+          XDG_SESSION_TYPE: x11
         run: |
           # Первый запуск скачанного бинарника предлагает установить себя, и
           # это единственный путь, которым окно установки достаётся человеку.
-          # Проверять его можно только там, где окно заведомо не дождётся
-          # человека: у этого раннера дисплея нет, окно откажет текстом. Текст
-          # и проверяем — он должен быть про дисплей, а не про модуль,
-          # забытый при сборке.
+          # На живом экране оно ждёт человека, поэтому критерий — «дожил до
+          # таймаута»: значит окно собралось и открылось.
           home="$(mktemp -d)"
           set +e
-          first="$(HOME="$home" XDG_CONFIG_HOME="$home/.config" \
-            SNAPREEL_FFMPEG=snapreel-no-such-binary ./dist/snapreel 2>&1)"
+          HOME="$home" XDG_CONFIG_HOME="$home/.config" \
+            xvfb-run --server-args="-screen 0 1280x900x24" \
+              timeout 15 ./dist/snapreel > first.log 2>&1
           code=$?
           set -e
-          printf '%s\n' "$first"
-          case "$first" in
-            *Traceback*) echo "трейсбек вместо сообщения пользователю"; exit 1;;
-            *"No module named"*) echo "в бинарник не попало окно настроек"; exit 1;;
+          cat first.log
+
+          if [ "$code" != "124" ]; then
+            echo "окно установки не открылось: бинарник вышел с кодом $code"; exit 1
+          fi
+          case "$(cat first.log)" in
+            *Traceback*) echo "трейсбек вместо окна"; exit 1;;
+            *"No module named"*) echo "в бинарник не попало окно установки"; exit 1;;
           esac
-          # мало убедиться, что плохого не сказано: надо, чтобы окно настроек
-          # вообще пытались открыть, — иначе шаг зеленеет, ничего не проверив
-          case "$first" in
-            *"не открыть окно установки"*) ;;
-            *) echo "первого запуска не случилось: окно даже не пробовали"; exit 1;;
-          esac
-          # и отказать оно должно из-за дисплея, которого у раннера нет: любая
-          # другая причина значит сломанный в сборке tkinter
-          case "$first" in
-            *"no display name"* | *'$DISPLAY'*) ;;
-            *) echo "окно отказало не из-за дисплея — tkinter в сборке сломан"; exit 1;;
-          esac
-          case "$code" in
-            1 | 2) ;;
-            *) echo "ожидался отказ с кодом 1 или 2, получен $code"; exit 1;;
+
+          # а без графической сессии он обязан объяснить это словами: Qt в
+          # такой ситуации убивает процесс сам, и человеку достался бы только
+          # английский текст про платформенный плагин
+          set +e
+          blind="$(env -u DISPLAY -u WAYLAND_DISPLAY ./dist/snapreel 2>&1)"
+          set -e
+          printf '%s\n' "$blind"
+          case "$blind" in
+            *"нет графической сессии"*) ;;
+            *) echo "без дисплея бинарник не объяснил, почему окна нет"; exit 1;;
           esac
 
       - name: Record a clip with the bundled ffmpeg

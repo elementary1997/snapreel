@@ -1,4 +1,4 @@
-"""Поведение резидента с иконкой: без экрана, без pystray и без записи."""
+"""Поведение резидента с иконкой: без экрана, без Qt-трея и без записи."""
 
 from __future__ import annotations
 
@@ -345,7 +345,7 @@ def test_a_failed_install_keeps_the_update_offered(tray_app, monkeypatch):
     assert any("обновление не удалось" in note for note in tray_app.notes)
 
 
-# --- pystray --------------------------------------------------------------
+# --- меню и иконка Qt -------------------------------------------------------
 
 
 @pytest.mark.gui
@@ -445,12 +445,12 @@ def test_a_missing_qt_comes_out_as_our_own_error(monkeypatch, tmp_path):
 
 
 def test_the_cli_explains_a_missing_tray(monkeypatch, capsys, tmp_path):
-    """Без pystray команда обязана назвать замену, а не упасть трейсбеком."""
+    """Без Qt команда обязана назвать замену, а не упасть трейсбеком."""
     from snapreel import cli
     from snapreel.errors import TrayUnavailable
 
     def refuse(config, path=None):
-        raise TrayUnavailable("нет pystray — иконку в трее показать нечем")
+        raise TrayUnavailable("нет PySide6 — иконку в трее показать нечем")
 
     monkeypatch.setattr(tray, "run", refuse)
 
@@ -458,7 +458,7 @@ def test_the_cli_explains_a_missing_tray(monkeypatch, capsys, tmp_path):
 
     assert code == 2
     printed = capsys.readouterr().err
-    assert "нет pystray" in printed
+    assert "нет PySide6" in printed
     assert "daemon" in printed
 
 
@@ -540,3 +540,22 @@ def test_the_tray_icon_comes_from_the_package(need):
     assert resources.icon(recording=True) != resources.icon()
     assert not tray.icon().isNull()
     assert not tray.icon(recording=True).isNull()
+
+
+def test_a_tray_without_qt_explains_itself(monkeypatch, tmp_path):
+    """Голый импорт Qt выдал бы трейсбек — команда обязана сказать словами."""
+    import builtins
+
+    real = builtins.__import__
+
+    def absent(name, *args, **kwargs):
+        if name.startswith("PySide6"):
+            raise ImportError("No module named 'PySide6'")
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", absent)
+
+    with pytest.raises(TrayUnavailable) as failure:
+        tray.run(Config(), tmp_path / "c.toml", ENV)
+
+    assert "PySide6" in str(failure.value)

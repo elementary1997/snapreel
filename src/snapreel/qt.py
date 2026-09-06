@@ -11,15 +11,46 @@ Qt импортируется только здесь и в самих окна�
 
 from __future__ import annotations
 
+import os
 import sys
 
 from . import resources, theme
 from .config import Config
 from .errors import OverlayUnavailable
+from .platform_info import detect
 
 # Платформы Qt, при которых окон не будет: их выбирают, когда настоящая не
 # поднялась (или когда так попросили тесты).
 BLIND = ("minimal", "offscreen", "vnc")
+
+
+def _refuse_early() -> None:
+    """Проверяет то, из-за чего Qt убил бы процесс, не дав нам слова.
+
+    Оба отказа Qt считает смертельными: он печатает своё сообщение
+    по-английски и вызывает abort — перехватить это уже нечем. Поэтому
+    условия проверяются до создания приложения, пока мы ещё можем объяснить
+    происходящее по-человечески.
+    """
+    env = detect()
+    if not env.is_linux:
+        return  # у Windows и macOS сессия есть всегда, а плагин встроенный
+
+    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        raise OverlayUnavailable(
+            "нет графической сессии (не заданы DISPLAY и WAYLAND_DISPLAY) — "
+            "окно показать негде. Из терминала без экрана работают `record --region`, "
+            "`doctor` и `config`."
+        )
+
+    from . import deps
+
+    if not deps.is_satisfied(deps.XCB_CURSOR):
+        raise OverlayUnavailable(
+            "Qt не поднимет окно без библиотек xcb: поставьте libxcb-cursor0 "
+            "и libxkbcommon-x11-0 (в Debian и Ubuntu — apt install libxcb-cursor0 "
+            "libxkbcommon-x11-0), либо запустите `snapreel setup`."
+        )
 
 
 def application(config: Config | None = None) -> tuple[object, bool]:
@@ -39,6 +70,8 @@ def application(config: Config | None = None) -> tuple[object, bool]:
     existing = QApplication.instance()
     if existing is not None:
         return existing, False
+
+    _refuse_early()
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName("snapreel")

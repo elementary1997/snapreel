@@ -394,15 +394,18 @@ def _handler(action: Callable[[], None] | None):
 
 def run(config: Config, path: Path | None = None, env: Environment | None = None) -> int:
     """Показывает иконку и не возвращается, пока её не попросят исчезнуть."""
-    from PySide6.QtCore import QObject, Qt, Signal
-    from PySide6.QtWidgets import QMenu, QSystemTrayIcon
-
     from .qt import application
 
+    # приложение заводится первым: только оно умеет объяснить, чего не хватает,
+    # а голый импорт Qt выдал бы человеку трейсбек вместо сообщения
     try:
         qt_app, _ = application(config)
+        from PySide6.QtCore import QObject, Qt, Signal
+        from PySide6.QtWidgets import QMenu, QSystemTrayIcon
     except OverlayUnavailable as exc:
         raise TrayUnavailable(str(exc)) from exc
+    except ImportError as exc:
+        raise TrayUnavailable(f"нет PySide6 — иконку в трее показать нечем: {exc}") from exc
 
     app = TrayApp(config, path, env)
 

@@ -62,9 +62,9 @@ class FakeBackend:
 def need():
     """Пропускает тест, когда модуль не поставлен или требует дисплея.
 
-    `pytest.importorskip` тут не годится: без `DISPLAY` pystray и pynput
-    бросают не `ModuleNotFoundError`, а свои ошибки подключения к X-серверу,
-    а прогон обязан оставаться headless.
+    `pytest.importorskip` тут не годится: без `DISPLAY` pynput бросает не
+    `ModuleNotFoundError`, а свою ошибку подключения к X-серверу, а прогон
+    обязан оставаться headless.
     """
     import importlib
 
