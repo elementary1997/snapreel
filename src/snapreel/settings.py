@@ -95,6 +95,17 @@ GROUPS: tuple[Group, ...] = (
             Field("ffprobe", "Команда ffprobe", "text"),
         ),
     ),
+    Group(
+        "Обновление",
+        (
+            Field(
+                "check_updates",
+                "Проверять обновления",
+                "bool",
+                "раз в сутки спрашивает github о новом релизе; больше никуда snapreel не ходит",
+            ),
+        ),
+    ),
 )
 
 FIELDS: tuple[Field, ...] = tuple(field for group in GROUPS for field in group.fields)

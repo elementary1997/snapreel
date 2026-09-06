@@ -46,6 +46,7 @@ class Config:
     ffmpeg: str = DEFAULT_FFMPEG
     ffprobe: str = "ffprobe"
     notify: bool = True
+    check_updates: bool = True
 
     @property
     def ffmpeg_path(self) -> str:

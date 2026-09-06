@@ -8,7 +8,7 @@ import sys
 from importlib.util import find_spec
 from pathlib import Path
 
-from . import autostart, deps, storage
+from . import autostart, deps, storage, updates
 from . import config as config_module
 from . import region as region_module
 from .backends import CaptureError, for_environment
@@ -84,6 +84,10 @@ def build_parser() -> argparse.ArgumentParser:
     daemon.add_argument("--hotkey-gif", help="комбинация для GIF")
 
     sub.add_parser("settings", help="окно настроек: хоткеи, качество, каталог клипов")
+
+    update = sub.add_parser("update", help="проверить и поставить новую версию")
+    update.add_argument("--check", action="store_true", help="только проверить, не ставить")
+    update.add_argument("--yes", "-y", action="store_true", help="ставить без вопросов")
     sub.add_parser("doctor", help="проверить окружение и внешние зависимости")
     sub.add_parser("config", help="напечатать конфиг со значениями по умолчанию")
 
@@ -95,6 +99,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     _make_output_printable()
+    # прошлое обновление отодвинуло старый бинарник — на Windows удалить его
+    # можно было только после выхода из него, то есть теперь
+    updates.clean_leftovers_if_frozen()
     parser = build_parser()
     args = parser.parse_args(argv)
     bare = args.command is None
@@ -118,6 +125,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if command == "settings":
         return _settings(cfg, args.config)
+    if command == "update":
+        return _update(args)
     if command == "doctor":
         return _doctor(cfg)
     if command == "setup":
@@ -141,6 +150,50 @@ def main(argv: list[str] | None = None) -> int:
         # Явную `record` это не касается: попросили записать — записываем.
         return 0
     return _record(cfg, args)
+
+
+# --- обновление -----------------------------------------------------------
+
+
+def _update(args) -> int:
+    """Проверяет github и, если попросят, ставит новую версию."""
+    from . import __version__
+
+    try:
+        release = updates.check(config_module.config_path().parent, force=True)
+    except updates.UpdateError as exc:
+        print(f"{PROG}: {exc}", file=sys.stderr)
+        return 1
+
+    if release is None:
+        print(f"установлена последняя версия ({__version__})")
+        return 0
+
+    print(f"есть новая версия: {release.name} (у вас {__version__})")
+    if args.check:
+        return 0
+    if not updates.supported():
+        print(f"{PROG}: обновлять умеем только готовый бинарник.", file=sys.stderr)
+        print("Из исходников — `pip install -U snapreel` или `git pull`.", file=sys.stderr)
+        return 2
+    if not args.yes and _interactive():
+        answer = input(f"поставить {release.name}? [Y/n]: ").strip().lower()
+        if answer not in ("", "y", "yes", "д", "да"):
+            print("отменено")
+            return 0
+
+    try:
+        path = updates.update(release, progress=_progress)
+    except updates.UpdateError as exc:
+        print(f"\n{PROG}: {exc}", file=sys.stderr)
+        return 1
+    print(f"\nобновлено до {release.name}: {path}")
+    return 0
+
+
+def _progress(done: int, total: int) -> None:
+    if total:
+        print(f"\rскачано {done * 100 // total}%", end="", flush=True)
 
 
 # --- настройки ------------------------------------------------------------

@@ -9,11 +9,12 @@
 
 from __future__ import annotations
 
+import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, ttk
 
-from . import autostart, settings, theme
+from . import autostart, settings, theme, updates
 from . import config as config_module
 from .config import Config
 from .errors import OverlayUnavailable
@@ -21,6 +22,7 @@ from .platform_info import enable_dpi_awareness
 
 PAD = 12
 LABEL_WIDTH = 22
+UPDATE_GROUP = "Обновление"
 
 
 class _HotkeyEntry(ttk.Frame):
@@ -184,6 +186,109 @@ class _DirEntry(ttk.Frame):
             self.variable.set(chosen)
 
 
+class _UpdatePanel(ttk.Frame):
+    """Версия, проверка и установка обновления одной кнопкой.
+
+    Сеть и скачивание идут в отдельном потоке, а виджеты трогает только
+    главный: Tk не потокобезопасен, поэтому поток лишь складывает сообщения,
+    а забирает их таймер окна.
+    """
+
+    def __init__(self, master, config_path: Path | None):
+        super().__init__(master, style="Card.TFrame")
+        self._config_path = config_path
+        self._release = None
+        self._mailbox: list[tuple[str, object]] = []
+        self.columnconfigure(1, weight=1)
+
+        from . import __version__
+
+        ttk.Label(self, text="Версия", style="Card.TLabel", width=LABEL_WIDTH, anchor="w").grid(
+            row=0, column=0, sticky="w", padx=(0, PAD)
+        )
+        ttk.Label(self, text=__version__, style="Combo.TLabel").grid(row=0, column=1, sticky="w")
+
+        self.button = ttk.Button(
+            self, text="Проверить обновления", style="Card.TButton", command=self.check
+        )
+        self.button.grid(row=1, column=1, sticky="w", pady=(PAD, 4))
+        self.status = ttk.Label(self, text="", style="Hint.TLabel", wraplength=380)
+        self.status.grid(row=2, column=1, sticky="w")
+
+        self.after(200, self._drain)
+
+    # --- действия --------------------------------------------------------
+
+    def check(self) -> None:
+        self._work("Спрашиваю github…", self._check)
+
+    def install(self) -> None:
+        self._work(f"Скачиваю {self._release.name}…", self._install)
+
+    def _work(self, message: str, job) -> None:
+        self.button.configure(state="disabled")
+        self._say(message)
+        threading.Thread(target=job, daemon=True).start()
+
+    def _check(self) -> None:
+        try:
+            directory = (self._config_path or config_module.config_path()).parent
+            release = updates.check(directory, force=True)
+        except updates.UpdateError as exc:
+            self._post("error", str(exc))
+            return
+        self._post("checked", release)
+
+    def _install(self) -> None:
+        try:
+            path = updates.update(self._release, progress=self._progress)
+        except updates.UpdateError as exc:
+            self._post("error", str(exc))
+            return
+        self._post("installed", path)
+
+    def _progress(self, done: int, total: int) -> None:
+        if total:
+            self._post("progress", done * 100 // total)
+
+    # --- обмен с потоком -------------------------------------------------
+
+    def _post(self, kind: str, payload: object) -> None:
+        self._mailbox.append((kind, payload))
+
+    def _drain(self) -> None:
+        try:
+            while self._mailbox:
+                kind, payload = self._mailbox.pop(0)
+                self._handle(kind, payload)
+            self.after(200, self._drain)
+        except tk.TclError:
+            # окно закрыли, пока поток ещё качал: докладывать больше некому,
+            # и это нормальный исход, а не ошибка
+            return
+
+    def _handle(self, kind: str, payload) -> None:
+        if kind == "progress":
+            self._say(f"Скачиваю… {payload}%")
+            return
+        if kind == "error":
+            self._say(str(payload), bad=True)
+        elif kind == "checked" and payload is None:
+            self._say("Установлена последняя версия", ok=True)
+        elif kind == "checked":
+            self._release = payload
+            self.button.configure(text=f"Обновить до {payload.name}", command=self.install)
+            self._say(f"Есть версия {payload.name}")
+        elif kind == "installed":
+            self._say("Обновлено. Изменения вступят в силу при следующем запуске.", ok=True)
+            self.button.configure(text="Проверить обновления", command=self.check)
+        self.button.configure(state="normal")
+
+    def _say(self, text: str, ok: bool = False, bad: bool = False) -> None:
+        color = theme.OK if ok else theme.DANGER if bad else theme.MUTED
+        self.status.configure(text=text, foreground=color)
+
+
 class SettingsWindow:
     """Окно целиком: разделы слева, поля справа, сохранение внизу."""
 
@@ -255,6 +360,12 @@ class SettingsWindow:
             )
             button.grid(row=index, column=0, sticky="we", pady=(0, 2))
             self._buttons[group.title] = button
+
+            if group.title == UPDATE_GROUP:
+                self.updates = _UpdatePanel(page, self.path)
+                self.updates.grid(
+                    row=len(group.fields) * 2, column=0, columnspan=2, sticky="we", pady=(PAD, 0)
+                )
 
         self._inner = inner
         self._select(settings.GROUPS[0].title)

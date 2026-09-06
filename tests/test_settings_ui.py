@@ -99,3 +99,60 @@ def test_a_bad_value_keeps_the_file_untouched(window, tmp_path):
     assert not (tmp_path / "config.toml").exists()
     assert "1..120" in window._errors["fps"].cget("text")
     assert window.saved is False
+
+
+# --- панель обновления -----------------------------------------------------
+
+
+def drain(window, panel, tries: int = 50) -> None:
+    """Крутит цикл окна, пока фоновый поток не доложит о результате."""
+    import time
+
+    for _ in range(tries):
+        pump(window)
+        panel._drain()
+        if str(panel.button.cget("state")) == "normal":
+            return
+        time.sleep(0.02)
+
+
+def test_the_panel_offers_the_newer_version(window, monkeypatch):
+    from snapreel import updates
+
+    release = updates.Release((9, 9, 9), "v9.9.9", "a", "https://d/a", "https://d/s", 1)
+    monkeypatch.setattr(updates, "check", lambda directory, force=False: release)
+    panel = window.updates
+
+    panel.check()
+    drain(window, panel)
+
+    assert "9.9.9" in panel.button.cget("text")
+
+
+def test_the_panel_says_when_nothing_is_newer(window, monkeypatch):
+    from snapreel import updates
+
+    monkeypatch.setattr(updates, "check", lambda directory, force=False: None)
+    panel = window.updates
+
+    panel.check()
+    drain(window, panel)
+
+    assert "последняя" in panel.status.cget("text")
+
+
+def test_a_network_failure_stays_inside_the_panel(window, monkeypatch):
+    """Окно настроек не должно падать оттого, что github недоступен."""
+    from snapreel import updates
+
+    def boom(directory, force=False):
+        raise updates.UpdateError("не спросить github об обновлениях: нет сети")
+
+    monkeypatch.setattr(updates, "check", boom)
+    panel = window.updates
+
+    panel.check()
+    drain(window, panel)
+
+    assert "нет сети" in panel.status.cget("text")
+    assert str(panel.button.cget("state")) == "normal"

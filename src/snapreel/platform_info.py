@@ -55,6 +55,18 @@ def detect() -> Environment:
     raise RuntimeError(f"платформа {system} не поддерживается")
 
 
+def machine() -> str:
+    """Архитектура в терминах имён файлов релиза: `arm64` либо `x86_64`.
+
+    Живёт здесь по той же причине, что и `detect`: вопросы «где мы работаем»
+    задаются системе в одном месте, а не расползаются по модулям.
+    """
+    name = platform.machine().lower()
+    if name in ("arm64", "aarch64"):
+        return "arm64"
+    return "x86_64"
+
+
 def enable_dpi_awareness() -> None:
     """На Windows переводит процесс в per-monitor DPI awareness.
 
