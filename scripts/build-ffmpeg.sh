@@ -165,14 +165,31 @@ strip "$out/ffmpeg$exe" 2>/dev/null || true
 missing=()
 
 ask() {
-    local kind="$1" name="$2" answer
+    local kind="$1" name="$2" answer expected
+    # Ждём именно подтверждения, а не отсутствия отказа. Перечислить все формы
+    # отказа нельзя: на сборке без декодера ffmpeg отвечает «кодек известен, но
+    # декодеров для него нет» — это не «Unknown», и чёрный список такую сборку
+    # пропускал, а GIF у пользователя потом не собирался.
+    case "$kind" in
+        encoder) expected="Encoder $name" ;;
+        decoder) expected="Decoder $name" ;;
+        muxer) expected="Muxer $name" ;;
+        demuxer) expected="Demuxer $name" ;;
+        filter) expected="Filter $name" ;;
+        protocol) expected="$name AVOptions" ;;
+        *)
+            echo "неизвестный род проверки: $kind" >&2
+            exit 1
+            ;;
+    esac
     # без трубы: `| head -1` закрывает её раньше, чем ffmpeg допишет вывод, и
     # под `pipefail` весь конвейер отдаёт 141 — скрипт падал бы на успешной
     # проверке. Первая строка отрезается прямо в оболочке
     answer="$("$out/ffmpeg$exe" -hide_banner -h "$kind=$name" 2>&1)"
     answer="${answer%%$'\n'*}"
     case "$answer" in
-        Unknown* | *"is not recognized"*) missing+=("$kind $name") ;;
+        "$expected"*) ;;
+        *) missing+=("$kind $name: $answer") ;;
     esac
 }
 
