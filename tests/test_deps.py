@@ -25,8 +25,9 @@ def test_wayland_needs_its_own_stack():
 
 
 @pytest.mark.parametrize("env", [MACOS, WINDOWS])
-def test_desktop_platforms_need_only_ffmpeg_and_tk(env):
-    assert keys(env) == {"ffmpeg", "tkinter"}
+def test_desktop_platforms_need_only_ffmpeg(env):
+    """Всё остальное там встроено: Qt ставится pip'ом, буфер обмена системный."""
+    assert keys(env) == {"ffmpeg"}
 
 
 def test_apt_updates_before_installing():
@@ -41,8 +42,8 @@ def test_pacman_and_zypper_are_non_interactive():
 
 
 def test_brew_installs_in_one_call():
-    commands = deps.install_commands("brew", [deps.FFMPEG, deps.TKINTER])
-    assert commands == [["brew", "install", "ffmpeg", "python-tk"]]
+    commands = deps.install_commands("brew", [deps.FFMPEG, deps.NOTIFY_SEND])
+    assert commands == [["brew", "install", "ffmpeg"]]
 
 
 def test_winget_installs_one_package_per_call():
@@ -53,9 +54,9 @@ def test_winget_installs_one_package_per_call():
 
 
 def test_requirements_without_a_package_are_reported():
-    """tkinter в winget не поставить — об этом надо сказать, а не молчать."""
-    assert deps.unresolved("winget", [deps.FFMPEG, deps.TKINTER]) == [deps.TKINTER]
-    assert deps.install_commands("winget", [deps.TKINTER]) == []
+    """xclip в winget не поставить — об этом надо сказать, а не молчать."""
+    assert deps.unresolved("winget", [deps.FFMPEG, deps.XCLIP]) == [deps.XCLIP]
+    assert deps.install_commands("winget", [deps.XCLIP]) == []
 
 
 def test_unknown_manager_is_an_error():
@@ -66,15 +67,13 @@ def test_unknown_manager_is_an_error():
 def test_missing_reports_absent_tools(monkeypatch):
     """Список считается от машины, поэтому в тесте машина подменяется целиком."""
     monkeypatch.setattr(deps.shutil, "which", lambda name: None)
-    monkeypatch.setattr(deps, "find_spec", lambda name: None)
     monkeypatch.setattr(deps, "_library_present", lambda name: False)
     absent = {item.key for item in deps.missing(Config(), X11)}
-    assert absent == {"ffmpeg", "tkinter", "libxcb-cursor", "xclip", "notify-send"}
+    assert absent == {"ffmpeg", "libxcb-cursor", "xclip", "notify-send"}
 
 
 def test_missing_is_empty_when_everything_is_present(monkeypatch):
     monkeypatch.setattr(deps.shutil, "which", lambda name: f"/usr/bin/{name}")
-    monkeypatch.setattr(deps, "find_spec", lambda name: object())
     monkeypatch.setattr(deps, "_library_present", lambda name: True)
     assert deps.missing(Config(), X11) == []
 

@@ -232,3 +232,32 @@ def _settle(window, tries: int = 200) -> None:
         if window.updates._thread is None and window.updates.button.isEnabled():
             return
     raise AssertionError("панель обновлений так и не ответила")
+
+
+# --- выбор каталога -------------------------------------------------------
+
+
+def test_the_clips_folder_is_picked_in_the_file_manager(window, monkeypatch):
+    """Путь печатают руками только от безысходности — есть проводник."""
+    from PySide6.QtWidgets import QFileDialog
+
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: "/tmp/Клипы")
+    )
+    field = window._widgets["output_dir"]
+
+    field._pick()
+
+    assert field.get() == "/tmp/Клипы"
+
+
+def test_a_cancelled_choice_keeps_the_old_path(window, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+
+    field = window._widgets["output_dir"]
+    field._edit.setText("/было/так")
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: ""))
+
+    field._pick()
+
+    assert field.get() == "/было/так"

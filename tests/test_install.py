@@ -114,6 +114,7 @@ def test_a_source_install_says_it_has_nothing_to_copy(monkeypatch):
 
 
 def test_uninstalling_removes_the_copy_and_the_autostart(frozen, monkeypatch):
+    """Убирается работающая копия: каталог мог быть выбран человеком свой."""
     removed = []
     monkeypatch.setattr(
         install.subprocess,
@@ -121,6 +122,9 @@ def test_uninstalling_removes_the_copy_and_the_autostart(frozen, monkeypatch):
         lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, "", ""),
     )
     install.install(LINUX)
+    target = install.target_path(LINUX)
+    monkeypatch.setattr(install.sys, "executable", str(target))
+    monkeypatch.setattr(install.subprocess, "Popen", lambda argv, **kwargs: None)
     from snapreel import autostart
 
     monkeypatch.setattr(autostart, "remove_autostart", lambda env=None: removed.append(env))
@@ -128,17 +132,46 @@ def test_uninstalling_removes_the_copy_and_the_autostart(frozen, monkeypatch):
     outcome = install.uninstall(LINUX)
 
     assert outcome.ok
-    assert not install.target_path(LINUX).exists()
     assert removed == [LINUX]
 
 
-def test_uninstalling_nothing_is_not_a_failure(frozen, monkeypatch):
+def test_uninstalling_nothing_is_not_a_failure(frozen, monkeypatch, tmp_path):
     from snapreel import autostart
 
     monkeypatch.setattr(autostart, "remove_autostart", lambda env=None: None)
+    monkeypatch.setattr(install.sys, "executable", str(tmp_path / "нет-такого"))
+
     outcome = install.uninstall(LINUX)
+
     assert outcome.ok
     assert "не найдено" in outcome.message
+
+
+# --- каталог выбирает человек ---------------------------------------------
+
+
+def test_a_chosen_folder_replaces_the_default(frozen, tmp_path):
+    """Каталог берут из проводника, имя файла добавляем сами."""
+    chosen = tmp_path / "Программы" / "snapreel"
+
+    plan = install.plan(LINUX, folder=chosen)
+
+    assert plan.target == chosen / "snapreel"
+    assert not plan.installed
+
+
+def test_installing_into_a_chosen_folder_creates_it(frozen, monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        install.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, "", ""),
+    )
+    chosen = tmp_path / "куда-нибудь" / "поглубже"
+
+    outcome = install.install(LINUX, folder=chosen)
+
+    assert outcome.ok
+    assert (chosen / "snapreel").read_bytes() == frozen.read_bytes()
 
 
 # --- первый запуск --------------------------------------------------------

@@ -1,7 +1,7 @@
 """Исключения, которые нужны CLI до того, как подтянется GUI-код.
 
-Держим их отдельно: `snapreel doctor` обязан работать и без tkinter — иначе
-он не сможет сказать, что tkinter как раз и не хватает.
+Держим их отдельно: `snapreel doctor` обязан работать и без Qt — иначе он не
+сможет сказать, что Qt как раз и не хватает.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ class SelectionCancelled(RuntimeError):
 
 
 class OverlayUnavailable(RuntimeError):
-    """Оверлей показать нечем — нет tkinter или нет доступа к дисплею."""
+    """Оверлей показать нечем — нет Qt или нет доступа к дисплею."""
 
 
 class TrayUnavailable(RuntimeError):

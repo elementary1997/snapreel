@@ -214,12 +214,12 @@ def _progress(done: int, total: int) -> None:
 
 
 def _settings(cfg: Config, path: Path | None) -> int:
-    """Окно настроек; без tkinter объясняет, чем его заменить."""
+    """Окно настроек; без Qt объясняет, чем его заменить."""
     from .errors import OverlayUnavailable
 
     try:
         from .settings_ui import open_settings
-    except ImportError as exc:  # tkinter есть не в каждой сборке Python
+    except ImportError as exc:  # Qt ставится экстрой и есть не везде
         print(f"{PROG}: не открыть окно настроек: {exc}", file=sys.stderr)
         print("Настройте через `snapreel hotkey set` или правкой конфига.", file=sys.stderr)
         return 2
@@ -523,7 +523,7 @@ def _offer_install(cfg: Config) -> bool:
     """
     try:
         from .install_ui import ask_install
-    except ImportError:  # без tkinter ставят командой
+    except ImportError:  # без Qt ставят командой
         return False
     try:
         return ask_install(cfg)
@@ -629,11 +629,6 @@ def _doctor(cfg) -> int:
         print(f"{clipboard_tool:<15} {found or 'НЕ НАЙДЕН'}")
         if not found:
             problems.append(f"не найден {clipboard_tool} — файл не попадёт в буфер")
-
-    if find_spec("tkinter"):
-        print("tkinter         есть")
-    else:
-        problems.append("нет tkinter — не показать оверлей выделения (apt install python3-tk)")
 
     if find_spec("pynput"):
         print("pynput          есть")

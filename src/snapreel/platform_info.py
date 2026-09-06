@@ -59,9 +59,8 @@ def detect() -> Environment:
 def prefers_dark(env: Environment | None = None) -> bool | None:
     """Тёмная ли тема у системы. None — спросить не вышло.
 
-    Спрашиваем сами, потому что tkinter системную тему не знает: у него одна
-    палитра на все случаи, и светлое окно посреди тёмного рабочего стола
-    выглядит чужим приложением.
+    Спрашиваем сами: Qt отвечает на этот вопрос не везде, а светлое окно
+    посреди тёмного рабочего стола выглядит чужим приложением.
     """
     env = env or detect()
     try:
@@ -204,7 +203,7 @@ def virtual_desktop(env: Environment | None = None) -> Region:
         region = _virtual_desktop_xrandr()
         if region is not None:
             return region
-    return _virtual_desktop_tk()
+    return _virtual_desktop_qt()
 
 
 def _virtual_desktop_windows() -> Region:
@@ -251,12 +250,36 @@ def _virtual_desktop_xrandr() -> Region | None:
     return None
 
 
-def _virtual_desktop_tk() -> Region:
-    import tkinter
+def _virtual_desktop_qt() -> Region:
+    """Границы всех экранов по мнению Qt — запасной путь для macOS и Wayland.
 
-    root = tkinter.Tk()
-    try:
-        root.withdraw()
-        return Region(0, 0, root.winfo_screenwidth(), root.winfo_screenheight())
-    finally:
-        root.destroy()
+    Считаем в физических пикселях: именно ими меряет захват экрана, а Qt
+    отдаёт логические точки.
+    """
+    from PySide6.QtGui import QGuiApplication
+
+    from .qt import application
+
+    application()
+    united = None
+    for screen in QGuiApplication.screens():
+        ratio = screen.devicePixelRatio()
+        geometry = screen.geometry()
+        box = Region(
+            round(geometry.x() * ratio),
+            round(geometry.y() * ratio),
+            round(geometry.width() * ratio),
+            round(geometry.height() * ratio),
+        )
+        united = box if united is None else _union(united, box)
+    if united is None:
+        raise RuntimeError("Qt не нашёл ни одного экрана")
+    return united
+
+
+def _union(first: Region, second: Region) -> Region:
+    left = min(first.x, second.x)
+    top = min(first.y, second.y)
+    right = max(first.right, second.right)
+    bottom = max(first.bottom, second.bottom)
+    return Region(left, top, right - left, bottom - top)

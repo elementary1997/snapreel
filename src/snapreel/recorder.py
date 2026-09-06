@@ -102,7 +102,7 @@ def record(
 
 
 def _indicator_class():
-    """Без tkinter запись всё равно идёт — просто молча и до конца таймера."""
+    """Без Qt запись всё равно идёт — просто молча и до конца таймера."""
     try:
         from .indicator import RecordingIndicator
     except ImportError:

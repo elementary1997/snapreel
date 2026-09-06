@@ -10,7 +10,6 @@ import platform
 import shutil
 import subprocess
 from dataclasses import dataclass, field
-from importlib.util import find_spec
 
 from .config import Config
 from .platform_info import Environment, Platform, detect
@@ -38,18 +37,6 @@ FFMPEG = Requirement(
         "zypper": "ffmpeg",
         "brew": "ffmpeg",
         "winget": "Gyan.FFmpeg",
-    },
-)
-
-TKINTER = Requirement(
-    key="tkinter",
-    reason="без него не показать оверлей выделения области",
-    packages={
-        "apt": "python3-tk",
-        "dnf": "python3-tkinter",
-        "pacman": "tk",
-        "zypper": "python3-tk",
-        "brew": "python-tk",
     },
 )
 
@@ -121,7 +108,7 @@ def _library_present(name: str) -> bool:
 def required(env: Environment | None = None) -> list[Requirement]:
     """Полный список того, что нужно на этой платформе."""
     env = env or detect()
-    items = [FFMPEG, TKINTER]
+    items = [FFMPEG]
     if env.is_linux:
         items.append(XCB_CURSOR)
     if env.platform is Platform.LINUX_X11:
@@ -132,8 +119,6 @@ def required(env: Environment | None = None) -> list[Requirement]:
 
 
 def is_satisfied(requirement: Requirement, config: Config | None = None) -> bool:
-    if requirement.key == "tkinter":
-        return find_spec("tkinter") is not None
     if requirement.key == "libxcb-cursor":
         # это библиотека, а не команда: её ищет линковщик, а не PATH
         return _library_present("libxcb-cursor.so.0")
@@ -204,7 +189,7 @@ def install_commands(manager: str, requirements: list[Requirement]) -> list[list
 
 
 def unresolved(manager: str, requirements: list[Requirement]) -> list[Requirement]:
-    """То, для чего у этого менеджера пакета нет — например tkinter в winget."""
+    """То, для чего у этого менеджера пакета нет — например xclip в winget."""
     return [item for item in requirements if item.package_for(manager) is None]
 
 

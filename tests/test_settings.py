@@ -107,8 +107,8 @@ def test_a_bare_launch_raises_the_tray_with_a_config_too(tmp_path, monkeypatch):
     assert cli.main(["--config", str(path)]) == 0
 
 
-def test_settings_without_tkinter_explains_itself(tmp_path, monkeypatch, capsys):
-    """`doctor` и запись обязаны жить без tkinter — окно просто объясняет, чем заменить."""
+def test_settings_without_qt_explains_itself(tmp_path, monkeypatch, capsys):
+    """`doctor` и запись обязаны жить без Qt — окно просто объясняет, чем заменить."""
     monkeypatch.setitem(sys.modules, "snapreel.settings_ui", None)
 
     code = cli.main(["--config", str(tmp_path / "c.toml"), "settings"])

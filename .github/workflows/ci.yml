@@ -77,7 +77,7 @@ jobs:
         run: |
           sudo apt-get update
           # библиотеки Qt xcb: без них плагин не грузится, и окно не появится
-          sudo apt-get install -y ffmpeg xvfb xclip python3-tk libegl1 libdbus-1-3 \
+          sudo apt-get install -y ffmpeg xvfb xclip libegl1 libdbus-1-3 \
             libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-keysyms1 \
             libxcb-xkb1 libxcb-shape0 libxcb-render-util0 libxcb-image0
 

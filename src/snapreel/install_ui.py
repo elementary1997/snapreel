@@ -9,9 +9,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QDialog,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -49,15 +52,21 @@ class InstallWindow(QDialog):
         title.setProperty("role", "title")
         column.addWidget(title)
 
-        hint = QLabel("Программа будет лежать здесь и подниматься сама при входе:")
+        hint = QLabel("Выберите папку — программа ляжет туда и будет подниматься сама:")
         hint.setProperty("role", "hint")
         hint.setWordWrap(True)
         column.addWidget(hint)
 
-        path = QLineEdit(str(self.plan.target))
-        path.setReadOnly(True)
-        path.setCursorPosition(0)
-        column.addWidget(path)
+        where = QHBoxLayout()
+        where.setSpacing(GAP // 2)
+        self.path = QLineEdit(str(self.plan.target.parent))
+        self.path.setCursorPosition(0)
+        browse = QPushButton("Обзор")
+        browse.setFixedWidth(84)
+        browse.clicked.connect(self._pick)
+        where.addWidget(self.path, 1)
+        where.addWidget(browse)
+        column.addLayout(where)
 
         row = QHBoxLayout()
         row.setSpacing(GAP)
@@ -86,19 +95,36 @@ class InstallWindow(QDialog):
 
     # --- действие --------------------------------------------------------
 
+    def _pick(self) -> None:
+        """Каталог выбирают проводником: печатать путь руками никто не хочет."""
+        chosen = QFileDialog.getExistingDirectory(
+            self, "Куда установить snapreel", self.path.text()
+        )
+        if chosen:
+            self.path.setText(chosen)
+
+    def folder(self) -> Path | None:
+        """Выбранный каталог; None — оставили как было."""
+        text = self.path.text().strip()
+        if not text or Path(text) == self.plan.target.parent:
+            return None
+        return Path(text).expanduser()
+
     def _install(self) -> None:
         self.button.setEnabled(False)
         _restyle(self.status, "hint", "Устанавливаю…")
         self.repaint()
 
         with_autostart = self.autostart.value()
-        outcome = install.install(with_autostart=with_autostart)
+        folder = self.folder()
+        outcome = install.install(with_autostart=with_autostart, folder=folder)
         if not outcome.ok:
             _restyle(self.status, "error", outcome.message)
             self.button.setEnabled(True)
             return
 
-        self.installed = install.launch(self.plan.target, autostarted=with_autostart)
+        target = install.plan(folder=folder).target
+        self.installed = install.launch(target, autostarted=with_autostart)
         if not self.installed:
             # поставили, но поднять не смогли: пусть человек запустит сам, а
             # не гадает, почему иконки нет

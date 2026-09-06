@@ -1,165 +1,195 @@
-"""Полноэкранный оверлей выделения области — на Tk, чтобы работал везде."""
+"""Полноэкранный оверлей выделения области — на Qt.
+
+Окно накрывает весь виртуальный рабочий стол, затемняет его и вырезает
+светлое окно там, где человек ведёт мышью: так видно, что именно попадёт в
+кадр. Наружу отдаются те же координаты, что и раньше, — в системе, в которой
+их ждут gdigrab и x11grab.
+"""
 
 from __future__ import annotations
 
 from .errors import OverlayUnavailable, SelectionCancelled
-from .platform_info import Environment, Platform, detect, enable_dpi_awareness, virtual_desktop
+from .platform_info import Environment, Platform, detect, virtual_desktop
 from .region import Region, from_corners, normalize
 
 __all__ = ["OverlayUnavailable", "SelectionCancelled", "select_region"]
 
-DIM = "#101014"
+DIM = (16, 16, 20, 96)  # затемнение поверх экрана
 ACCENT = "#4ea1ff"
 HINT = "Выделите область мышью    ·    Esc — отмена"
 
 
-def _import_tk():
-    """tkinter отсутствует в части сборок Python, а без дисплея он не стартует."""
-    try:
-        import tkinter
-    except ImportError as exc:
-        raise OverlayUnavailable(
-            "нет tkinter — не показать выделение области "
-            "(Debian/Ubuntu: sudo apt install python3-tk). "
-            "Либо задайте область флагом --region WxH+X+Y."
-        ) from exc
-    return tkinter
-
-
 def select_region(env: Environment | None = None, min_side: int = 16) -> Region:
-    """Показывает затемнённый оверлей и возвращает выделенный прямоугольник.
-
-    Координаты берутся из `x_root`/`y_root`, то есть в системе виртуального
-    рабочего стола — той же, в которой их ждут gdigrab и x11grab.
-    """
+    """Показывает затемнённый оверлей и возвращает выделенный прямоугольник."""
     env = env or detect()
-    enable_dpi_awareness()
-    _import_tk()
-    desktop = virtual_desktop(env)
-    overlay = _Overlay(desktop, env, min_side)
+    from .qt import application
+
+    application()
+    overlay = _overlay_class()(virtual_desktop(env), env, min_side)
     return overlay.run()
 
 
-class _Overlay:
-    def __init__(self, desktop: Region, env: Environment, min_side: int) -> None:
-        self.desktop = desktop
-        self.env = env
-        self.min_side = min_side
-        self.result: Region | None = None
-        self.start: tuple[int, int] | None = None
+def physical(point, env: Environment) -> tuple[int, int]:
+    """Из координат Qt — в те, которыми меряет захват экрана.
 
-        tk = _import_tk()
-        self.tk = tk
-        self.root = tk.Tk()
-        self.root.title("snapreel")
-        self._configure_window()
+    Qt считает в логических точках, а gdigrab и x11grab — в физических
+    пикселях: на Windows со масштабом 125% разница видна сразу, запишется не
+    та область. На macOS перевод не нужен и вреден — там масштаб Retina
+    добавляет `recorder` по пробному кадру (ADR и гочи о том же).
+    """
+    if env.platform is Platform.MACOS:
+        return point.x(), point.y()
+    from PySide6.QtGui import QGuiApplication
 
-        self.canvas = tk.Canvas(
-            self.root,
-            highlightthickness=0,
-            bd=0,
-            bg=DIM,
-            cursor="crosshair",
-        )
-        self.canvas.pack(fill="both", expand=True)
-        self._draw_hint()
-        self._bind()
+    screen = QGuiApplication.screenAt(point) or QGuiApplication.primaryScreen()
+    ratio = screen.devicePixelRatio() if screen is not None else 1.0
+    return round(point.x() * ratio), round(point.y() * ratio)
 
-    def _configure_window(self) -> None:
-        root = self.root
-        root.attributes("-topmost", True)
-        if self.env.platform is Platform.MACOS:
-            # у Aqua нет надёжного overrideredirect с произвольной геометрией
-            root.attributes("-fullscreen", True)
-            root.attributes("-alpha", 0.35)
-        else:
-            root.overrideredirect(True)
-            root.geometry(
-                f"{self.desktop.width}x{self.desktop.height}+{self.desktop.x}+{self.desktop.y}"
+
+def _logical(value: int, env: Environment) -> int:
+    """Обратный перевод: столько же пикселей, но в мерках Qt."""
+    if env.platform is Platform.MACOS:
+        return value
+    from PySide6.QtGui import QGuiApplication
+
+    screen = QGuiApplication.primaryScreen()
+    ratio = screen.devicePixelRatio() if screen is not None else 1.0
+    return round(value / ratio)
+
+
+def _overlay_class():
+    """Класс окна собирается лениво: без Qt модуль обязан импортироваться."""
+    try:
+        from PySide6.QtCore import QPoint, QRect, Qt
+        from PySide6.QtGui import QColor, QFont, QPainter, QPen
+        from PySide6.QtWidgets import QWidget
+    except ImportError as exc:
+        raise OverlayUnavailable(
+            "нет PySide6 — не показать выделение области "
+            "(pip install 'snapreel[ui]'). Либо задайте её флагом --region WxH+X+Y."
+        ) from exc
+
+    class Overlay(QWidget):
+        def __init__(self, desktop: Region, env: Environment, min_side: int):
+            super().__init__()
+            self.desktop = desktop
+            self.env = env
+            self.min_side = min_side
+            self.result: Region | None = None
+            self.start: QPoint | None = None
+            self.current: QPoint | None = None
+
+            self.setWindowTitle("snapreel")
+            self.setWindowFlags(
+                Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.WindowStaysOnTopHint
+                | Qt.WindowType.Tool
             )
-            root.attributes("-alpha", 0.35)
-        root.configure(bg=DIM)
-        root.focus_force()
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+            self.setCursor(Qt.CursorShape.CrossCursor)
+            self.setGeometry(
+                _logical(desktop.x, env),
+                _logical(desktop.y, env),
+                _logical(desktop.width, env),
+                _logical(desktop.height, env),
+            )
 
-    def _draw_hint(self) -> None:
-        self.hint_id = self.canvas.create_text(
-            self.desktop.width // 2,
-            max(40, self.desktop.height // 2 - 40),
-            text=HINT,
-            fill="#f2f4f8",
-            font=("TkDefaultFont", 16),
-        )
+        # --- рисование ---------------------------------------------------
 
-    def _bind(self) -> None:
-        self.canvas.bind("<ButtonPress-1>", self._on_press)
-        self.canvas.bind("<B1-Motion>", self._on_drag)
-        self.canvas.bind("<ButtonRelease-1>", self._on_release)
-        self.root.bind("<Escape>", lambda _event: self._cancel())
-        self.root.bind("<Button-3>", lambda _event: self._cancel())
+        def paintEvent(self, event) -> None:
+            painter = QPainter(self)
+            painter.fillRect(self.rect(), QColor(*DIM))
+            if self.start is None or self.current is None:
+                self._draw_hint(painter)
+                return
 
-    # --- координаты -------------------------------------------------------
+            box = QRect(self.start, self.current).normalized()
+            # выделенное не затемняем: человек должен видеть, что снимает
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+            painter.fillRect(box, QColor(0, 0, 0, 0))
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
 
-    def _to_canvas(self, event) -> tuple[int, int]:
-        """Из глобальных координат в координаты холста."""
-        return event.x_root - self.desktop.x, event.y_root - self.desktop.y
+            painter.setPen(QPen(QColor(ACCENT), 2))
+            painter.drawRect(box)
+            self._draw_size(painter, box)
 
-    # --- события ----------------------------------------------------------
+        def _draw_hint(self, painter) -> None:
+            painter.setPen(QColor("#f2f4f8"))
+            font = QFont(self.font())
+            font.setPointSize(15)
+            painter.setFont(font)
+            painter.drawText(
+                self.rect().adjusted(0, 0, 0, -self.height() // 4),
+                Qt.AlignmentFlag.AlignCenter,
+                HINT,
+            )
 
-    def _on_press(self, event) -> None:
-        self.start = (event.x_root, event.y_root)
-        self.canvas.delete("selection")
-        if self.hint_id:
-            self.canvas.delete(self.hint_id)
-            self.hint_id = None
+        def _draw_size(self, painter, box) -> None:
+            ratio = 1 if self.env.platform is Platform.MACOS else self.devicePixelRatio()
+            text = f"{round(box.width() * ratio)}×{round(box.height() * ratio)}"
+            font = QFont(self.font())
+            font.setPointSize(11)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.setPen(QColor("#ffffff"))
+            top = box.top() - 8 if box.top() > 24 else box.bottom() + 20
+            painter.drawText(box.left() + 2, top, text)
 
-    def _on_drag(self, event) -> None:
-        if not self.start:
-            return
-        x0, y0 = self.start[0] - self.desktop.x, self.start[1] - self.desktop.y
-        x1, y1 = self._to_canvas(event)
-        self.canvas.delete("selection")
-        self.canvas.create_rectangle(x0, y0, x1, y1, outline=ACCENT, width=2, tags="selection")
-        width, height = abs(x1 - x0), abs(y1 - y0)
-        label_x, label_y = min(x0, x1) + 4, min(y0, y1) - 14
-        if label_y < 8:
-            label_y = min(y0, y1) + 14
-        self.canvas.create_text(
-            label_x,
-            label_y,
-            text=f"{width}×{height}",
-            fill="#ffffff",
-            anchor="w",
-            font=("TkDefaultFont", 12, "bold"),
-            tags="selection",
-        )
+        # --- события -----------------------------------------------------
 
-    def _on_release(self, event) -> None:
-        if not self.start:
-            return
-        region = from_corners(self.start[0], self.start[1], event.x_root, event.y_root)
-        if region.width < self.min_side or region.height < self.min_side:
-            # случайный клик — оставляем оверлей открытым
-            self.start = None
-            self.canvas.delete("selection")
-            self._draw_hint()
-            return
-        self.result = region
-        self.root.quit()
+        def mousePressEvent(self, event) -> None:
+            if event.button() is Qt.MouseButton.RightButton:
+                self._cancel()
+                return
+            self.start = event.position().toPoint()
+            self.current = self.start
+            self.update()
 
-    def _cancel(self) -> None:
-        self.result = None
-        self.root.quit()
+        def mouseMoveEvent(self, event) -> None:
+            if self.start is None:
+                return
+            self.current = event.position().toPoint()
+            self.update()
 
-    # --- запуск -----------------------------------------------------------
+        def mouseReleaseEvent(self, event) -> None:
+            if self.start is None:
+                return
+            first = physical(event.globalPosition().toPoint(), self.env)
+            origin = self._origin_global()
+            region = from_corners(origin[0], origin[1], first[0], first[1])
+            if region.width < self.min_side or region.height < self.min_side:
+                # случайный клик — оставляем оверлей открытым
+                self.start = self.current = None
+                self.update()
+                return
+            self.result = region
+            self.close()
 
-    def run(self) -> Region:
-        try:
-            self.root.mainloop()
-        finally:
-            try:
-                self.root.destroy()
-            except self.tk.TclError:
-                pass
-        if self.result is None:
-            raise SelectionCancelled("выделение отменено")
-        return normalize(self.result, self.min_side)
+        def keyPressEvent(self, event) -> None:
+            if event.key() == Qt.Key.Key_Escape:
+                self._cancel()
+
+        def _origin_global(self) -> tuple[int, int]:
+            """Точка нажатия в тех же координатах, что и точка отпускания."""
+            return physical(self.mapToGlobal(self.start), self.env)
+
+        def _cancel(self) -> None:
+            self.result = None
+            self.close()
+
+        # --- запуск ------------------------------------------------------
+
+        def run(self) -> Region:
+            from PySide6.QtWidgets import QApplication
+
+            self.show()
+            self.raise_()
+            self.activateWindow()
+            app = QApplication.instance()
+            while self.isVisible():
+                app.processEvents()
+            if self.result is None:
+                raise SelectionCancelled("выделение отменено")
+            return normalize(self.result, self.min_side)
+
+    return Overlay

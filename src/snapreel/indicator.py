@@ -1,8 +1,12 @@
-"""Индикатор записи: рамка вокруг области, таймер и кнопка остановки."""
+"""Индикатор записи: рамка вокруг области, таймер и кнопка остановки.
+
+Рамка собрана из четырёх тонких окон по краям области — так она не
+перекрывает то, что записывается, и не попадает в кадр сама. Панель с
+таймером стоит рядом с областью, а не внутри неё, по той же причине.
+"""
 
 from __future__ import annotations
 
-import tkinter as tk
 from collections.abc import Callable
 
 from .platform_info import Environment, Platform, detect
@@ -13,6 +17,8 @@ PANEL_BG = "#1b1d23"
 PANEL_FG = "#f2f4f8"
 BORDER = 3
 POLL_MS = 100
+PANEL_W = 220
+PANEL_H = 44
 
 
 def format_seconds(value: float) -> str:
@@ -21,10 +27,11 @@ def format_seconds(value: float) -> str:
 
 
 class RecordingIndicator:
-    """Крутит Tk-цикл, пока идёт запись.
+    """Крутит цикл Qt, пока идёт запись.
 
-    Рамка собрана из четырёх тонких окон по краям области: так она не
-    перекрывает то, что записывается, и не попадает в кадр сама.
+    Класс собирается лениво (`_widgets`), потому что модуль обязан
+    импортироваться и там, где Qt нет: `doctor` и запись с `--no-indicator`
+    работают без него.
     """
 
     def __init__(
@@ -46,22 +53,40 @@ class RecordingIndicator:
         self.request_stop = request_stop
         self.env = env or detect()
         self.stop_requested = False
+        self._done = False
 
-        self.root = tk.Tk()
-        self.root.withdraw()
-        self.bars: list[tk.Toplevel] = []
+        from .qt import application
+        from .selector import _logical
+
+        application()
+        self._logical = _logical
+        self.windows: list[object] = []
         if self.env.platform is not Platform.MACOS:
             self._build_border()
         self._build_panel()
-        self.root.after(POLL_MS, self._tick)
 
     # --- окна -------------------------------------------------------------
 
-    def _floating(self, width: int, height: int, x: int, y: int, bg: str) -> tk.Toplevel:
-        window = tk.Toplevel(self.root, bg=bg)
-        window.overrideredirect(True)
-        window.attributes("-topmost", True)
-        window.geometry(f"{max(width, 1)}x{max(height, 1)}+{x}+{y}")
+    def _floating(self, width: int, height: int, x: int, y: int, colour: str):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QWidget
+
+        window = QWidget()
+        window.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+        )
+        window.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        window.setStyleSheet(f"background: {colour};")
+        window.setGeometry(
+            self._logical(x, self.env),
+            self._logical(y, self.env),
+            max(self._logical(width, self.env), 1),
+            max(self._logical(height, self.env), 1),
+        )
+        window.show()
+        self.windows.append(window)
         return window
 
     def _build_border(self) -> None:
@@ -73,91 +98,106 @@ class RecordingIndicator:
             (b, r.height, r.right, r.y),  # право
         ]
         for width, height, x, y in edges:
-            self.bars.append(self._floating(width, height, x, y, ACCENT))
+            self._floating(width, height, x, y, ACCENT)
 
     def _build_panel(self) -> None:
-        panel_w, panel_h = 210, 42
+        from PySide6.QtCore import Qt, QTimer
+        from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton
+
         x = self.region.x
-        y = self.region.y - BORDER - panel_h - 6
+        y = self.region.y - BORDER - PANEL_H - 6
         if y < 0:
             y = self.region.bottom + BORDER + 6
-        self.panel = self._floating(panel_w, panel_h, x, y, PANEL_BG)
+        panel = self._floating(PANEL_W, PANEL_H, x, y, PANEL_BG)
 
-        self.dot = tk.Label(self.panel, text="●", fg=ACCENT, bg=PANEL_BG)
-        self.dot.pack(side="left", padx=(10, 4))
-        self.label = tk.Label(
-            self.panel,
-            text=f"0:00 / {format_seconds(self.max_seconds)}",
-            fg=PANEL_FG,
-            bg=PANEL_BG,
-            font=("TkDefaultFont", 11, "bold"),
-        )
-        self.label.pack(side="left")
-        self.button = tk.Button(
-            self.panel,
-            text="Стоп (Esc)",
-            command=self._on_stop,
-            relief="flat",
-            bg="#2c3038",
-            fg=PANEL_FG,
-            activebackground="#3a3f49",
-            activeforeground=PANEL_FG,
-            bd=0,
-            padx=8,
-        )
-        self.button.pack(side="right", padx=8, pady=6)
+        row = QHBoxLayout(panel)
+        row.setContentsMargins(10, 6, 8, 6)
+        row.setSpacing(8)
 
-        self.panel.bind("<Escape>", lambda _e: self._on_stop())
-        self.root.bind("<Escape>", lambda _e: self._on_stop())
-        self.panel.focus_force()
+        self.dot = QLabel("●")
+        self.dot.setStyleSheet(f"color: {ACCENT}; background: transparent;")
+        row.addWidget(self.dot)
+
+        self.label = QLabel(f"0:00 / {format_seconds(self.max_seconds)}")
+        self.label.setStyleSheet(f"color: {PANEL_FG}; background: transparent; font-weight: 600;")
+        row.addWidget(self.label, 1)
+
+        self.button = QPushButton("Стоп (Esc)")
+        self.button.setStyleSheet(
+            f"QPushButton {{ background: #2c3038; color: {PANEL_FG}; border: none;"
+            " border-radius: 6px; padding: 4px 10px; }"
+            "QPushButton:hover { background: #3a3f49; }"
+            "QPushButton:disabled { color: #8b93a1; }"
+        )
+        self.button.clicked.connect(self._on_stop)
+        row.addWidget(self.button)
+
+        # Esc работает и когда фокуса нет: нажимать в окно, которое намеренно
+        # не забирает фокус, человеку неоткуда
+        from PySide6.QtGui import QKeySequence, QShortcut
+
+        shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), panel)
+        shortcut.activated.connect(self._on_stop)
+
+        self.panel = panel
+        self.timer = QTimer()
+        self.timer.timeout.connect(self._tick)
+        self.timer.start(POLL_MS)
 
     # --- цикл -------------------------------------------------------------
 
     def _blink(self, seconds: float) -> None:
-        self.dot.configure(fg=ACCENT if int(seconds * 2) % 2 == 0 else PANEL_BG)
+        colour = ACCENT if int(seconds * 2) % 2 == 0 else PANEL_BG
+        self.dot.setStyleSheet(f"color: {colour}; background: transparent;")
 
     def _tick(self) -> None:
         if self.is_finished():
-            self.root.quit()
+            self._finish()
             return
         seconds = self.elapsed()
         if seconds >= self.max_seconds:
             # бэкенды без собственного лимита (wf-recorder) останавливает этот таймер
             self.request_stop()
-            self.root.quit()
+            self._finish()
             return
         self._blink(seconds)
-        self.label.configure(text=f"{format_seconds(seconds)} / {format_seconds(self.max_seconds)}")
+        self.label.setText(f"{format_seconds(seconds)} / {format_seconds(self.max_seconds)}")
         remaining = self.min_seconds - seconds
         if remaining > 0:
-            self.button.configure(state="disabled", text=f"Стоп через {int(remaining) + 1}")
-        elif self.button["state"] == "disabled":
-            self.button.configure(state="normal", text="Стоп (Esc)")
-        self.root.after(POLL_MS, self._tick)
+            self.button.setEnabled(False)
+            self.button.setText(f"Стоп через {int(remaining) + 1}")
+        elif not self.button.isEnabled():
+            self.button.setEnabled(True)
+            self.button.setText("Стоп (Esc)")
 
     def _on_stop(self) -> None:
         if self.elapsed() < self.min_seconds:
             return
         self.stop_requested = True
         self.request_stop()
-        self.root.quit()
+        self._finish()
+
+    def _finish(self) -> None:
+        self._done = True
+        self.timer.stop()
 
     def run(self) -> bool:
         """Возвращает True, если остановил пользователь, а не таймер."""
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance()
         try:
-            self.root.mainloop()
+            while not self._done:
+                app.processEvents()
         finally:
             self.close()
         return self.stop_requested
 
     def close(self) -> None:
-        for window in [*self.bars, getattr(self, "panel", None)]:
-            if window is not None:
-                try:
-                    window.destroy()
-                except tk.TclError:
-                    pass
-        try:
-            self.root.destroy()
-        except tk.TclError:
-            pass
+        for window in self.windows:
+            try:
+                window.close()
+                window.deleteLater()
+            except RuntimeError:  # окно уже убрано самим Qt
+                pass
+        self.windows = []

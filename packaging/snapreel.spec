@@ -23,7 +23,6 @@ hidden = [
     "snapreel.selector",
     "snapreel.indicator",
     "snapreel.tray",
-    "tkinter",
 ]
 
 # pynput нужен хоткеям, PySide6 — окнам и трею. Наличие проверяется find_spec,
@@ -102,8 +101,8 @@ analysis = Analysis(
     hiddenimports=hidden,
     hookspath=[],
     runtime_hooks=[],
-    # tkinter пока нужен: оверлей выделения и рамка записи ещё на нём
-    excludes=["numpy", "pytest", "PIL"] + qt_excludes,
+    # tkinter из проекта ушёл вместе с оверлеями (ADR-0009)
+    excludes=["numpy", "pytest", "PIL", "tkinter", "tcl", "tk"] + qt_excludes,
     cipher=block_cipher,
     noarchive=False,
 )

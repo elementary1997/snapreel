@@ -52,9 +52,10 @@ def target_path(env: Environment | None = None) -> Path:
     return Path.home() / ".local" / "bin" / APP
 
 
-def plan(env: Environment | None = None) -> Plan:
+def plan(env: Environment | None = None, folder: Path | None = None) -> Plan:
+    """Что произойдёт при установке. `folder` — выбранный человеком каталог."""
     source = Path(sys.executable).resolve()
-    target = target_path(env)
+    target = target_path(env) if folder is None else folder / target_path(env).name
     try:
         installed = target.exists() and target.resolve() == source
     except OSError:
@@ -62,7 +63,11 @@ def plan(env: Environment | None = None) -> Plan:
     return Plan(source=source, target=target, installed=installed)
 
 
-def install(env: Environment | None = None, with_autostart: bool = True) -> Outcome:
+def install(
+    env: Environment | None = None,
+    with_autostart: bool = True,
+    folder: Path | None = None,
+) -> Outcome:
     """Копирует бинарник на место и, если просят, прописывает автозапуск.
 
     Копия кладётся рядом и переименовывается на место — ровно по той же
@@ -72,7 +77,7 @@ def install(env: Environment | None = None, with_autostart: bool = True) -> Outc
     if not supported():
         return Outcome(False, "устанавливать умеем только готовый бинарник")
 
-    current = plan(env)
+    current = plan(env, folder)
     if current.installed:
         return Outcome(True, f"уже установлен: {current.target}")
 
@@ -107,11 +112,15 @@ def install(env: Environment | None = None, with_autostart: bool = True) -> Outc
 
 
 def uninstall(env: Environment | None = None) -> Outcome:
-    """Обратная операция: снимает автозапуск и убирает установленную копию."""
+    """Обратная операция: снимает автозапуск и убирает установленную копию.
+
+    Убирается именно та копия, которая работает: каталог человек мог выбрать
+    свой, и искать её по месту по умолчанию значило бы промахнуться.
+    """
     from . import autostart
 
     env = env or detect()
-    target = target_path(env)
+    target = Path(sys.executable).resolve() if supported() else target_path(env)
     autostart.remove_autostart(env)
     if not target.exists():
         return Outcome(True, "установленной копии не найдено")

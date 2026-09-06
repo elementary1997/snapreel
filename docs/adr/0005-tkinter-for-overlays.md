@@ -2,9 +2,9 @@
 
 ## Status
 
-Частично заменён [ADR-0009](0009-qt-for-the-interface.md) (2026-09-06)
+Superseded by [ADR-0009](0009-qt-for-the-interface.md) (2026-09-07)
 
-Окна переехали на Qt; оверлей выделения и рамка записи пока на tkinter.
+tkinter в проекте больше не используется: и окна, и оверлеи — на Qt.
 
 ## Context
 
