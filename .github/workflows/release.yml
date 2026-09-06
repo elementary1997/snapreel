@@ -10,8 +10,9 @@ permissions:
 
 jobs:
   build:
-    # никакой шаг здесь не идёт дольше сборки ffmpeg; всё, что висит дольше,
-    # висит зря — задание не должно ждать шесть часов дефолтного таймаута
+    # никакой шаг здесь не идёт дольше сборки ffmpeg: на холодном кеше самое
+    # медленное задание релиза 0.2.0 заняло восемь минут. Всё, что висит
+    # дольше, висит зря — ждать шесть часов дефолтного таймаута незачем
     timeout-minutes: 40
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
@@ -143,6 +144,31 @@ jobs:
           if ! grep -qE '^pynput +есть' doctor.txt; then
             echo "в бинарник не попал pynput — трей не услышит хоткеи"; exit 1
           fi
+
+      - name: First run without a config
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # Первый запуск открывает окно настроек, и это единственный путь,
+          # которым оно достаётся человеку из бинарника. Проверять его можно
+          # только там, где окно заведомо не дождётся человека: у этого
+          # раннера дисплея нет, окно откажет текстом. Текст и проверяем —
+          # он должен быть про дисплей, а не про модуль, забытый при сборке.
+          home="$(mktemp -d)"
+          set +e
+          first="$(HOME="$home" XDG_CONFIG_HOME="$home/.config" \
+            SNAPREEL_FFMPEG=snapreel-no-such-binary ./dist/snapreel 2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$first"
+          case "$first" in
+            *Traceback*) echo "трейсбек вместо сообщения пользователю"; exit 1;;
+            *"No module named"*) echo "в бинарник не попало окно настроек"; exit 1;;
+          esac
+          case "$code" in
+            1 | 2) ;;
+            *) echo "ожидался отказ с кодом 1 или 2, получен $code"; exit 1;;
+          esac
 
       - name: Record a clip with the bundled ffmpeg
         if: runner.os == 'Linux'
