@@ -59,11 +59,16 @@ if _bundled_ffmpeg:
     # корень распакованного бандла: там его ищет snapreel.bundled.binary
     binaries.append((_bundled_ffmpeg, "."))
 
+# иконка приложения: её же читают окно настроек и трей
+_assets = os.path.join(os.path.abspath("../src/snapreel"), "assets")
+datas = [(_assets, os.path.join("snapreel", "assets"))] if os.path.isdir(_assets) else []
+_icon = os.path.join(_assets, "icon.ico" if sys.platform == "win32" else "icon.png")
+
 analysis = Analysis(
     ["entrypoint.py"],
     pathex=["../src"],
     binaries=binaries,
-    datas=[],
+    datas=datas,
     hiddenimports=hidden,
     hookspath=[],
     runtime_hooks=[],
@@ -87,11 +92,15 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    # консольный: snapreel печатает путь к клипу и диагностику
-    console=True,
+    # На Windows сборка оконная: у консольной двойной щелчок открывает рядом
+    # с иконкой чёрное окно терминала, а приложение живёт в трее. Вывод при
+    # запуске из терминала не теряется — `platform_info.attach_console`
+    # подключается к консоли родителя. На остальных системах терминал сам
+    # решает, показывать ли окно, и консольная сборка ничего не портит.
+    console=sys.platform != "win32",
     disable_windowed_traceback=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
+    icon=_icon if os.path.isfile(_icon) else None,
 )

@@ -514,3 +514,28 @@ def test_a_missing_pystray_names_the_extra(monkeypatch):
         tray._pystray()
 
     assert "snapreel[tray]" in str(failure.value)
+
+
+def test_the_first_launch_says_where_to_look(tray_app):
+    """Окно само не открывается, но и молчать нельзя: конфига ещё нет."""
+    tray_app.app.greet()
+
+    assert tray_app.notes == ["работает в трее — настройки в меню иконки"]
+
+
+def test_a_configured_launch_greets_nobody(tray_app):
+    tray_app.app.config_path.write_text("fps = 30\n", encoding="utf-8")
+
+    tray_app.app.greet()
+
+    assert tray_app.notes == []
+
+
+def test_the_tray_icon_comes_from_the_package(need):
+    """Иконка нарисована заранее и лежит в пакете, а не рисуется на лету."""
+    need("PIL")
+    from snapreel import resources
+
+    assert resources.icon() is not None
+    assert resources.icon(recording=True) != resources.icon()
+    assert tray.image(size=32).size == (32, 32)

@@ -521,34 +521,34 @@ def test_a_path_with_undecodable_bytes_still_prints(monkeypatch):
     assert b".mp4" in stream.buffer.getvalue()
 
 
-# --- голый вызов без подкоманды пишет клип -------------------------------
+# --- голый вызов без подкоманды поднимает трей ---------------------------
 
 
-def test_bare_invocation_records_a_clip(wired, tmp_path, monkeypatch, capsys):
+def test_bare_invocation_raises_the_tray(tmp_path, monkeypatch, capsys):
     """Двойной щелчок по бинарнику зовёт snapreel без единого аргумента."""
-    wired()
-    monkeypatch.setattr(recorder, "select_region", lambda env: Region(0, 0, 100, 100))
+    raised = []
+    monkeypatch.setattr(cli, "_tray", lambda cfg, path: raised.append(path) or 0)
     config = tmp_path / "config.toml"
-    config.write_text(
-        f'output_dir = "{(tmp_path / "clips").as_posix()}"\nnotify = false\n', encoding="utf-8"
-    )
+    config.write_text("notify = false\n", encoding="utf-8")
 
     code = cli.main(["--config", str(config)])
 
     assert code == 0
+    assert raised == [config]
     assert "Traceback" not in capsys.readouterr().err
-    assert list((tmp_path / "clips").glob("*.mp4"))
 
 
-def test_bare_invocation_reads_argv_when_none_is_given(wired, tmp_path, monkeypatch):
-    """Бинарник зовёт main() без аргументов — подкоманда дописывается к sys.argv."""
-    wired()
-    monkeypatch.setattr(recorder, "select_region", lambda env: Region(0, 0, 100, 100))
+def test_bare_invocation_reads_argv_when_none_is_given(tmp_path, monkeypatch):
+    """Бинарник зовёт main() без аргументов — подкоманда дописывается к sys.argv.
+
+    Разбор идёт заново, поэтому в Namespace попадают флаги дописанной
+    подкоманды; строкой её не подставить.
+    """
+    raised = []
+    monkeypatch.setattr(cli, "_tray", lambda cfg, path: raised.append(path) or 0)
     config = tmp_path / "config.toml"
-    config.write_text(
-        f'output_dir = "{(tmp_path / "clips").as_posix()}"\nnotify = false\n', encoding="utf-8"
-    )
+    config.write_text("notify = false\n", encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["snapreel", "--config", str(config)])
 
     assert cli.main() == 0
-    assert list((tmp_path / "clips").glob("*.mp4"))
+    assert raised == [config]

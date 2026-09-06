@@ -47,6 +47,7 @@ class Config:
     ffprobe: str = "ffprobe"
     notify: bool = True
     check_updates: bool = True
+    theme: str = "auto"  # auto — как в системе; ещё бывает dark и light
 
     @property
     def ffmpeg_path(self) -> str:

@@ -37,6 +37,11 @@ doctor: ## диагностика окружения этой машины
 record: ## записать клип (для ручной проверки)
 	$(APP) record
 
+.PHONY: icon
+icon: ## перерисовать иконку приложения (нужен Pillow)
+	$(PIP) install --quiet pillow
+	$(VENV)/bin/python scripts/make-icon.py
+
 build: ## собрать одиночный бинарник в dist/ (нужен pyinstaller)
 	$(PIP) install --quiet pyinstaller
 	cd packaging && ../$(VENV)/bin/pyinstaller snapreel.spec --noconfirm --distpath ../dist

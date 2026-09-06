@@ -23,7 +23,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import autostart, notify, theme, updates
+from . import autostart, notify, resources, updates
 from . import config as config_module
 from .config import Config
 from .errors import TrayUnavailable
@@ -322,6 +322,21 @@ class TrayApp:
 
         self._threads.append(_start(watch))
 
+    def greet(self) -> None:
+        """Здоровается, если конфига ещё нет.
+
+        Окно настроек при первом запуске больше не открывается само: человек
+        просил иконку, а не окно поверх работы. Но и молчать нельзя — иначе
+        первый запуск выглядит как «ничего не произошло».
+        """
+        path = self.config_path or config_module.config_path()
+        try:
+            if path.is_file():
+                return
+        except OSError:
+            return
+        self._notify("snapreel", "работает в трее — настройки в меню иконки")
+
     def quit(self) -> None:
         self._stopping.set()
         self.unbind_hotkeys()
@@ -349,22 +364,32 @@ class TrayApp:
 
 
 def image(recording: bool = False, size: int = 64):
-    """Иконка: кружок «запись», красный во время записи.
+    """Иконка трея: рамка выделения с точкой записи, красная во время записи.
 
-    Рисуется кодом, а не лежит файлом: в трее она видна размером с букву,
-    деталей не разобрать, а картинку пришлось бы класть в бинарник.
+    Берётся готовый файл из пакета (`scripts/make-icon.py` рисует его один
+    раз): в трее иконка видна размером с букву, и нарисованная под каждый
+    размер она читается, а уменьшенная на лету — нет. Файла может не быть в
+    урезанной сборке, и тогда рисуется простой кружок: без иконки трей всё
+    равно должен подняться.
     """
     try:
         from PIL import Image, ImageDraw
     except ImportError as exc:  # pragma: no cover — вместе с pystray
         raise TrayUnavailable("нужен Pillow: pip install 'snapreel[tray]'") from exc
 
+    path = resources.icon(recording)
+    if path is not None:
+        try:
+            return Image.open(path).convert("RGBA").resize((size, size), Image.LANCZOS)
+        except OSError:
+            pass  # файл на месте, но не читается — рисуем запасной
+
     picture = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     pen = ImageDraw.Draw(picture)
     edge = size // 8
     pen.ellipse(
         (edge, edge, size - edge, size - edge),
-        fill=theme.DANGER if recording else theme.ACCENT,
+        fill="#d63c3c" if recording else "#2f6feb",
     )
     inner = size // 3
     pen.ellipse((inner, inner, size - inner, size - inner), fill="#ffffff")
@@ -482,6 +507,7 @@ def run(config: Config, path: Path | None = None, env: Environment | None = None
     app.bind_hotkeys()
     app.watch_updates()
     app.watch_dock()
+    app.greet()
     try:
         icon.run()
     except Exception as exc:

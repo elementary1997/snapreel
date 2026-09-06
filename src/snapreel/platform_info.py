@@ -6,6 +6,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -53,6 +54,98 @@ def detect() -> Environment:
         kind = Platform.LINUX_WAYLAND if wayland else Platform.LINUX_X11
         return Environment(kind, is_wsl=_is_wsl())
     raise RuntimeError(f"платформа {system} не поддерживается")
+
+
+def prefers_dark(env: Environment | None = None) -> bool | None:
+    """Тёмная ли тема у системы. None — спросить не вышло.
+
+    Спрашиваем сами, потому что tkinter системную тему не знает: у него одна
+    палитра на все случаи, и светлое окно посреди тёмного рабочего стола
+    выглядит чужим приложением.
+    """
+    env = env or detect()
+    try:
+        if env.platform is Platform.WINDOWS:
+            return _windows_dark()
+        if env.platform is Platform.MACOS:
+            return _macos_dark()
+        return _linux_dark()
+    except Exception:  # тема — украшение: любая неудача значит «не знаем»
+        return None
+
+
+def _windows_dark() -> bool | None:
+    import winreg
+
+    path = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
+        # 0 — тёмная тема приложений, 1 — светлая; ключа может не быть вовсе
+        value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+    return not int(value)
+
+
+def _macos_dark() -> bool | None:
+    result = subprocess.run(
+        ["defaults", "read", "-g", "AppleInterfaceStyle"],
+        capture_output=True,
+        text=True,
+        errors="replace",
+        timeout=5,
+    )
+    # в светлой теме ключа нет вовсе, и defaults отвечает ошибкой
+    return result.returncode == 0 and "dark" in result.stdout.strip().lower()
+
+
+def _linux_dark() -> bool | None:
+    if not shutil.which("gsettings"):
+        return None
+    for key in ("color-scheme", "gtk-theme"):
+        result = subprocess.run(
+            ["gsettings", "get", "org.gnome.desktop.interface", key],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip().strip("'\""):
+            answer = result.stdout.strip().lower()
+            if "dark" in answer:
+                return True
+            if key == "color-scheme" and "light" in answer:
+                return False
+    return None
+
+
+def attach_console() -> None:
+    """На Windows подключает вывод к консоли, из которой нас позвали.
+
+    Релизный exe собран оконным — иначе двойной щелчок открывал бы чёрное
+    окно консоли рядом с иконкой. У оконной сборки своих потоков вывода нет,
+    поэтому из терминала мы подключаемся к его консоли, а без неё
+    подставляем заглушку: `print` не должен ронять команду только потому,
+    что писать некуда.
+    """
+    if detect().platform is not Platform.WINDOWS:
+        return
+    if sys.stdout is not None and sys.stderr is not None:
+        return  # консольная сборка: потоки на месте
+
+    import ctypes
+
+    attached = False
+    try:
+        attached = bool(ctypes.windll.kernel32.AttachConsole(-1))  # ATTACH_PARENT_PROCESS
+    except (AttributeError, OSError):
+        attached = False
+
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name) is not None:
+            continue
+        try:
+            target = "CONOUT$" if attached else os.devnull
+            setattr(sys, name, open(target, "w", encoding="utf-8", errors="replace"))
+        except OSError:
+            setattr(sys, name, open(os.devnull, "w", encoding="utf-8", errors="replace"))
 
 
 def machine() -> str:

@@ -14,6 +14,7 @@ from . import autostart
 from .config import Config
 
 # Пресеты x264 от самого быстрого к самому плотному.
+THEMES = ("auto", "dark", "light")
 PRESETS = (
     "ultrafast",
     "superfast",
@@ -91,6 +92,13 @@ GROUPS: tuple[Group, ...] = (
         (
             Field("copy_path_as_text", "В буфер путь, а не файл", "bool"),
             Field("notify", "Показывать уведомления", "bool"),
+            Field(
+                "theme",
+                "Тема окна",
+                "choice",
+                "auto — как в системе",
+                choices=THEMES,
+            ),
             Field("ffmpeg", "Команда ffmpeg", "text", "оставьте как есть — используется вшитый"),
             Field("ffprobe", "Команда ffprobe", "text"),
         ),

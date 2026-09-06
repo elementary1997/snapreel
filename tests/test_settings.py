@@ -78,24 +78,26 @@ def test_modifier_keys_are_told_from_ordinary_ones(keysym, modifier):
     assert settings.modifier_of(keysym) == modifier
 
 
-# --- первый запуск ---------------------------------------------------------
+# --- голый запуск ----------------------------------------------------------
 
 
-def test_the_first_run_opens_the_settings_window(tmp_path, monkeypatch):
-    """Скачал и щёлкнул: без конфига запись начинать некуда, надо настроить."""
-    opened = []
-    monkeypatch.setattr(cli, "_settings", lambda cfg, path: opened.append(path) or 0)
-    monkeypatch.setattr(cli, "_record", lambda cfg, args: pytest.fail("вместо настроек записал"))
+def test_a_bare_launch_raises_the_tray(tmp_path, monkeypatch):
+    """Двойной щелчок по бинарнику — это иконка в трее, а не запись сразу."""
+    raised = []
+    monkeypatch.setattr(cli, "_tray", lambda cfg, path: raised.append(path) or 0)
+    monkeypatch.setattr(cli, "_record", lambda cfg, args: pytest.fail("вместо трея записал"))
+    monkeypatch.setattr(cli, "_settings", lambda cfg, path: pytest.fail("вместо трея открыл окно"))
 
     assert cli.main(["--config", str(tmp_path / "config.toml")]) == 0
-    assert opened
+    assert raised
 
 
-def test_a_configured_machine_records_at_once(tmp_path, monkeypatch):
+def test_a_bare_launch_raises_the_tray_with_a_config_too(tmp_path, monkeypatch):
+    """Настроенная машина ведёт себя так же: приложение живёт в трее."""
     path = tmp_path / "config.toml"
     config_module.save(Config(), path)
-    monkeypatch.setattr(cli, "_settings", lambda cfg, p: pytest.fail("настройки уже есть"))
-    monkeypatch.setattr(cli, "_record", lambda cfg, args: 0)
+    monkeypatch.setattr(cli, "_record", lambda cfg, args: pytest.fail("вместо трея записал"))
+    monkeypatch.setattr(cli, "_tray", lambda cfg, p: 0)
 
     assert cli.main(["--config", str(path)]) == 0
 

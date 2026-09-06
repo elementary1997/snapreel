@@ -15,7 +15,7 @@ from .backends import CaptureError, for_environment
 from .config import Config
 from .encode import EncodeError
 from .errors import OverlayUnavailable, SelectionCancelled
-from .platform_info import Platform, detect
+from .platform_info import Platform, attach_console, detect
 from .recorder import record
 
 PROG = "snapreel"
@@ -100,6 +100,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # оконная сборка Windows своих потоков вывода не имеет: сначала находим,
+    # куда писать, и только потом решаем, чем именно
+    attach_console()
     _make_output_printable()
     # прошлое обновление отодвинуло старый бинарник — на Windows удалить его
     # можно было только после выхода из него, то есть теперь
@@ -108,12 +111,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     bare = args.command is None
     if bare:
-        # Голый `snapreel` — это `snapreel record`: так его запускают двойным
-        # щелчком по бинарнику. Подкоманда дописывается и разбирается заново,
-        # а не подставляется строкой: без разбора в Namespace нет флагов
-        # record, и запись падает AttributeError на первом же `args.region`.
+        # Голый `snapreel` — это `snapreel tray`: так его запускают двойным
+        # щелчком по бинарнику, и человек ждёт иконку рядом с часами, а не
+        # немедленное выделение области. Подкоманда дописывается и
+        # разбирается заново, а не подставляется строкой: без разбора в
+        # Namespace не будет её флагов.
         argv = sys.argv[1:] if argv is None else argv
-        args = parser.parse_args([*argv, "record"])
+        args = parser.parse_args([*argv, "tray"])
     command = args.command
 
     try:
@@ -147,12 +151,6 @@ def main(argv: list[str] | None = None) -> int:
         return _tray(cfg, args.config)
     if command == "daemon":
         return _daemon(cfg, args)
-    if bare and _first_run(args.config) and _settings(cfg, args.config) == 0:
-        # Первый запуск чаще всего двойной щелчок по скачанному файлу. Начать
-        # с записи экрана человеку, который ещё ничего не настроил, — значит
-        # оставить его без единого способа добраться до настроек без терминала.
-        # Явную `record` это не касается: попросили записать — записываем.
-        return 0
     return _record(cfg, args)
 
 
@@ -201,10 +199,6 @@ def _progress(done: int, total: int) -> None:
 
 
 # --- настройки ------------------------------------------------------------
-
-
-def _first_run(path: Path | None) -> bool:
-    return not (path or config_module.config_path()).is_file()
 
 
 def _settings(cfg: Config, path: Path | None) -> int:
