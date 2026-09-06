@@ -58,7 +58,7 @@ jobs:
           msystem: MINGW64
           install: >-
             base-devel mingw-w64-x86_64-gcc mingw-w64-x86_64-nasm
-            make diffutils pkgconf tar
+            make diffutils pkgconf tar git
 
       - name: Cache ffmpeg
         id: ffmpeg

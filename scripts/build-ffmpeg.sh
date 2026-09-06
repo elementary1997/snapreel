@@ -17,6 +17,10 @@ set -euo pipefail
 # собирался тогда лишь вместе с HEVC (libavcodec/Makefile)
 FFMPEG_VERSION="${FFMPEG_VERSION:-7.1.2}"
 X264_VERSION="${X264_VERSION:-31e19f92f00c7003fa115047ce50978bc98c3a0d}"
+# Сумма того самого файла, на котором собран и проверен рабочий ffmpeg:
+# она держит воспроизводимость и ловит подмену — у зеркала вместо архива
+# случается html, а распаковка сообщает об этом гораздо невнятнее
+FFMPEG_SHA256="${FFMPEG_SHA256:-089bc60fb59d6aecc5d994ff530fd0dcb3ee39aa55867849a2bbc4e555f9c304}"
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work="${WORK:-$root/build/ffmpeg-src}"
@@ -87,22 +91,42 @@ esac
 
 mkdir -p "$work" "$prefix" "$out"
 
-fetch() {
-    local url="$1" archive="$2"
-    if [ ! -f "$work/$archive" ]; then
-        echo "== качаю $archive"
-        curl -fsSL --retry 3 -o "$work/$archive.part" "$url"
-        mv "$work/$archive.part" "$work/$archive"
+sha256_of() {
+    if command -v sha256sum > /dev/null 2>&1; then
+        sha256sum "$1" | cut -d' ' -f1
+    else
+        shasum -a 256 "$1" | cut -d' ' -f1  # macOS
     fi
 }
 
+fetch() {
+    local url="$1" archive="$2" want="$3" got
+    if [ -f "$work/$archive" ]; then
+        [ "$(sha256_of "$work/$archive")" = "$want" ] && return 0
+        echo "== перекачиваю $archive: сумма не сошлась"
+        rm -f "$work/$archive"
+    fi
+    echo "== качаю $archive"
+    curl -fsSL --retry 3 -o "$work/$archive.part" "$url"
+    got="$(sha256_of "$work/$archive.part")"
+    if [ "$got" != "$want" ]; then
+        echo "$archive: ожидалась сумма $want, получена $got" >&2
+        echo "скачано не то, что нужно — у зеркала вместо архива бывает html" >&2
+        exit 1
+    fi
+    mv "$work/$archive.part" "$work/$archive"
+}
+
 echo "== x264 $X264_VERSION"
-fetch "https://code.videolan.org/videolan/x264/-/archive/$X264_VERSION/x264-$X264_VERSION.tar.bz2" \
-    "x264.tar.bz2"
-if [ ! -d "$work/x264" ]; then
-    mkdir -p "$work/x264"
-    tar -xf "$work/x264.tar.bz2" -C "$work/x264" --strip-components=1
+# Не архивом с GitLab: эндпоинт `/-/archive/` собирает файл на лету и под
+# нагрузкой отдаёт html с кодом 200 — на этом развалились все четыре сборки
+# первого релиза 0.2.0. Клон отдаёт именно названный коммит и проверяет себя сам.
+if [ ! -d "$work/x264/.git" ]; then
+    rm -rf "$work/x264"
+    git clone --quiet https://code.videolan.org/videolan/x264.git "$work/x264"
 fi
+git -C "$work/x264" fetch --quiet origin
+git -C "$work/x264" checkout --quiet --detach "$X264_VERSION"
 if [ ! -f "$prefix/lib/libx264.a" ]; then
     (
         cd "$work/x264"
@@ -115,7 +139,7 @@ if [ ! -f "$prefix/lib/libx264.a" ]; then
 fi
 
 echo "== ffmpeg $FFMPEG_VERSION"
-fetch "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz" "ffmpeg.tar.xz"
+fetch "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz" "ffmpeg.tar.xz" "$FFMPEG_SHA256"
 if [ ! -d "$work/ffmpeg" ]; then
     mkdir -p "$work/ffmpeg"
     tar -xf "$work/ffmpeg.tar.xz" -C "$work/ffmpeg" --strip-components=1
