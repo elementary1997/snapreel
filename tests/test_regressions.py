@@ -507,3 +507,15 @@ def test_error_message_survives_a_console_without_cyrillic(monkeypatch, tmp_path
     assert code == 2
     stream.flush()
     assert "геометрию" in stream.buffer.getvalue().decode("utf-8")
+
+
+def test_a_path_with_undecodable_bytes_still_prints(monkeypatch):
+    """Имя файла из ФС приезжает одинокими суррогатами, а строгий UTF-8 падает и на них."""
+    stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+    monkeypatch.setattr(sys, "stdout", stream)
+    cli._make_output_printable()
+
+    print("/tmp/\udcff.mp4")
+
+    stream.flush()
+    assert b".mp4" in stream.buffer.getvalue()
