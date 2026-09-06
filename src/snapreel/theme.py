@@ -4,12 +4,18 @@
 берётся `clam` — единственная встроенная тема ttk, которой можно задать цвета
 целиком. Родные `vista` и `aqua` красивее по-своему, но перекрасить их нельзя,
 и окно выглядело бы в трёх системах тремя разными приложениями.
+
+Сам tkinter подтягивается внутри функций: за палитрой сюда ходит и трей, у
+которого своя оконная система, и модуль обязан импортироваться там, где
+tkinter не собран.
 """
 
 from __future__ import annotations
 
-from tkinter import font as tkfont
-from tkinter import ttk
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tkinter import font as tkfont
 
 # Светлая палитра: спокойный фон, белые карточки, один акцентный цвет.
 BG = "#eef1f5"
@@ -39,6 +45,8 @@ _FAMILIES = (
 
 
 def family(root) -> str:
+    from tkinter import font as tkfont
+
     available = set(tkfont.families(root))
     for name in _FAMILIES:
         if name in available:
@@ -48,6 +56,9 @@ def family(root) -> str:
 
 def apply(root) -> dict[str, tkfont.Font]:
     """Красит окно и возвращает шрифты, которые пригодятся при вёрстке."""
+    from tkinter import font as tkfont
+    from tkinter import ttk
+
     name = family(root)
     fonts = {
         "base": tkfont.Font(root=root, family=name, size=10),

@@ -19,11 +19,12 @@ class HotkeyError(RuntimeError):
     pass
 
 
-def run(config: Config, handler: Callable[[bool], None], env: Environment | None = None) -> int:
-    """Слушает хоткеи и вызывает `handler(as_gif)` в главном потоке.
+def listen(config: Config, handler: Callable[[bool], None], env: Environment | None = None):
+    """Вешает обе комбинации и сразу отдаёт слушателя, ничего не ожидая.
 
-    Tk обязан жить в главном потоке, поэтому слушатель pynput только кладёт
-    заявку в очередь, а запись запускается здесь.
+    `handler(as_gif)` вызывается в потоке pynput, поэтому трогать из него Tk
+    нельзя — так его зовёт трей, который на нажатие лишь запускает отдельный
+    процесс записи. Кому нужен главный поток, тому `run`.
     """
     env = env or detect()
     if env.platform is Platform.LINUX_WAYLAND:
@@ -36,13 +37,24 @@ def run(config: Config, handler: Callable[[bool], None], env: Environment | None
     except ImportError as exc:
         raise HotkeyError("нужен pynput: pip install 'snapreel[daemon]'") from exc
 
-    requests: queue.Queue[bool] = queue.Queue()
-    bindings = {
-        config.hotkey_mp4: lambda: requests.put(False),
-        config.hotkey_gif: lambda: requests.put(True),
-    }
-    listener = keyboard.GlobalHotKeys(bindings)
+    listener = keyboard.GlobalHotKeys(
+        {
+            config.hotkey_mp4: lambda: handler(False),
+            config.hotkey_gif: lambda: handler(True),
+        }
+    )
     listener.start()
+    return listener
+
+
+def run(config: Config, handler: Callable[[bool], None], env: Environment | None = None) -> int:
+    """Слушает хоткеи и вызывает `handler(as_gif)` в главном потоке.
+
+    Tk обязан жить в главном потоке, поэтому слушатель pynput только кладёт
+    заявку в очередь, а запись запускается здесь.
+    """
+    requests: queue.Queue[bool] = queue.Queue()
+    listener = listen(config, lambda as_gif: requests.put(as_gif), env)
 
     print(f"snapreel: {config.hotkey_mp4} — MP4, {config.hotkey_gif} — GIF, Ctrl+C — выход")
     try:

@@ -76,8 +76,10 @@ def build_parser() -> argparse.ArgumentParser:
     hotkey_sub.add_parser("show", help="показать текущие комбинации")
     hotkey_sub.add_parser("remove", help="снять системный хоткей")
 
-    auto = sub.add_parser("autostart", help="демон с хоткеем в автозапуске (macOS)")
+    auto = sub.add_parser("autostart", help="поднимать иконку в трее при входе в систему")
     auto.add_argument("--remove", action="store_true", help="убрать из автозапуска")
+
+    sub.add_parser("tray", help="иконка в трее: запись, настройки и обновления")
 
     daemon = sub.add_parser("daemon", help="висеть в фоне и слушать глобальный хоткей")
     daemon.add_argument("--hotkey", help="комбинация для MP4 (по умолчанию из конфига)")
@@ -141,6 +143,8 @@ def main(argv: list[str] | None = None) -> int:
         removed = storage.prune(cfg)
         print(f"удалено файлов: {len(removed)}")
         return 0
+    if command == "tray":
+        return _tray(cfg, args.config)
     if command == "daemon":
         return _daemon(cfg, args)
     if bare and _first_run(args.config) and _settings(cfg, args.config) == 0:
@@ -371,9 +375,10 @@ def _setup(cfg, args) -> int:
     if outcome.ok:
         print(
             "Комбинация для GIF системно не назначается — используйте "
-            f"`{PROG} daemon` либо второй ярлык на "
+            f"`{PROG} tray` либо второй ярлык на "
             f"{autostart.quote(autostart.launch_argv(as_gif=True))}"
         )
+    print(f"\nИконка в трее: `{PROG} tray`, поднимать её при входе в систему — `{PROG} autostart`.")
     return 0
 
 
@@ -471,20 +476,32 @@ def _hotkey(cfg, args) -> int:
 
 
 def _autostart(args) -> int:
+    """Прописывает трей в автозагрузку системы — и умеет убрать обратно."""
     env = detect()
-    if env.platform is not Platform.MACOS:
-        print(
-            f"{PROG}: автозапуск демона сделан для macOS. "
-            f"На этой платформе назначьте системный хоткей: {PROG} hotkey set",
-            file=sys.stderr,
-        )
-        return 2
-    outcome = autostart.remove_launch_agent() if args.remove else autostart.install_launch_agent()
+    outcome = autostart.remove_autostart(env) if args.remove else autostart.install_autostart(env)
     print(outcome.message)
     return 0 if outcome.ok else 1
 
 
-# --- демон и диагностика --------------------------------------------------
+# --- трей, демон и диагностика --------------------------------------------
+
+
+def _tray(cfg: Config, path: Path | None) -> int:
+    """Резидент с иконкой; без pystray объясняет, чем его заменить."""
+    from .errors import TrayUnavailable
+    from .tray import run as run_tray
+
+    try:
+        return run_tray(cfg, path)
+    except TrayUnavailable as exc:
+        print(f"{PROG}: {exc}", file=sys.stderr)
+        print(
+            f"Без иконки остаются системный хоткей (`{PROG} hotkey set`) и `{PROG} daemon`.",
+            file=sys.stderr,
+        )
+        return 2
+    except KeyboardInterrupt:
+        return 0
 
 
 def _daemon(cfg, args) -> int:
@@ -569,7 +586,13 @@ def _doctor(cfg) -> int:
     if find_spec("pynput"):
         print("pynput          есть")
     else:
-        print("pynput          нет (нужен только для `snapreel daemon`)")
+        print("pynput          нет (нужен трею и `snapreel daemon` для хоткеев)")
+
+    if find_spec("pystray") and find_spec("PIL"):
+        print("pystray         есть")
+    else:
+        print("pystray         нет (иконку в трее не показать: pip install 'snapreel[tray]')")
+    print(f"автозапуск:     {'включён' if autostart.autostart_enabled(env) else 'выключен'}")
 
     if problems:
         print("\nПроблемы:")

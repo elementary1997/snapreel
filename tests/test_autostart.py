@@ -2,6 +2,7 @@ import pytest
 
 from snapreel import autostart
 from snapreel.autostart import HotkeySetupError
+from snapreel.platform_info import Environment, Platform
 
 
 @pytest.mark.parametrize(
@@ -118,4 +119,50 @@ def test_launch_agent_plist_is_wellformed():
     plist = autostart.launch_agent_plist()
     ElementTree.fromstring(plist)  # бросит, если XML битый
     assert autostart.LAUNCH_AGENT in plist
-    assert "<string>daemon</string>" in plist
+    # в автозапуск идёт трей: он и хоткеи слушает, и виден в строке меню
+    assert "<string>tray</string>" in plist
+
+
+# --- автозапуск иконки в трее ---------------------------------------------
+
+
+def test_the_desktop_entry_starts_the_tray():
+    entry = autostart.desktop_entry()
+    assert "Type=Application" in entry
+    assert entry.rstrip().endswith("X-GNOME-Autostart-enabled=true")
+    exec_line = next(line for line in entry.splitlines() if line.startswith("Exec="))
+    assert exec_line.endswith("snapreel tray")
+
+
+def test_autostart_is_installed_and_taken_back_on_linux(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    env = Environment(platform=Platform.LINUX_X11, is_wsl=False)
+
+    assert not autostart.autostart_enabled(env)
+    assert autostart.install_autostart(env).ok
+    assert autostart.autostart_enabled(env)
+    assert autostart.desktop_entry_path().read_text(encoding="utf-8").startswith("[Desktop Entry]")
+
+    assert autostart.remove_autostart(env).ok
+    assert not autostart.autostart_enabled(env)
+
+
+def test_removing_an_absent_autostart_is_not_a_failure(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    outcome = autostart.remove_autostart(Environment(platform=Platform.LINUX_X11, is_wsl=False))
+    assert outcome.ok
+    assert "не найден" in outcome.message
+
+
+def test_the_startup_shortcut_runs_the_tray_without_a_hotkey(tmp_path):
+    """У ярлыка в автозагрузке комбинация бессмысленна: Windows её там не слушает."""
+    script = autostart.windows_shortcut_script(
+        tmp_path / "tray.lnk", argv=autostart.tray_argv(), description="Snapreel — иконка в трее"
+    )
+    assert "$link.Hotkey" not in script
+    assert "tray" in script
+
+
+def test_the_windows_startup_path_lands_in_the_startup_folder(monkeypatch, tmp_path):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    assert autostart.windows_startup_path().parent.name == "Startup"

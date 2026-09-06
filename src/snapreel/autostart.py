@@ -1,8 +1,13 @@
-"""Регистрация горячей клавиши средствами самой ОС.
+"""Регистрация горячей клавиши и автозапуска средствами самой ОС.
 
 Системный хоткей надёжнее встроенного демона: он переживает перезагрузку,
 не держит фоновый процесс и работает даже в Wayland, где перехват клавиш
 приложению запрещён.
+
+Здесь же живёт автозапуск иконки в трее — ярлык в Startup на Windows,
+LaunchAgent на macOS, `.desktop` в `~/.config/autostart` на Linux. У каждой
+установки есть обратная операция: то, что снапреел прописал в систему, он
+обязан уметь оттуда убрать.
 """
 
 from __future__ import annotations
@@ -19,8 +24,12 @@ from .platform_info import Environment, Platform, detect
 
 GNOME_SCHEMA = "org.gnome.settings-daemon.plugins.media-keys"
 GNOME_PATH = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/snapreel/"
+# Имя агента осталось от демона: переименование бросило бы уже прописанный
+# у людей plist в системе, а убрать его умеет только тот, кто знает имя.
 LAUNCH_AGENT = "com.snapreel.daemon"
 SHORTCUT_NAME = "Snapreel.lnk"
+STARTUP_NAME = "Snapreel (трей).lnk"
+DESKTOP_ENTRY_NAME = "snapreel.desktop"
 
 
 class HotkeySetupError(RuntimeError):
@@ -146,20 +155,26 @@ def is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
 
 
-def launch_argv(as_gif: bool = False) -> list[str]:
-    """Команда, которую вешаем на хоткей.
+def argv_for(*arguments: str) -> list[str]:
+    """Команда запуска snapreel с подкомандой — для системы, а не для шелла.
 
-    В обычной установке это `<python> -m snapreel record`, а в собранном
+    В обычной установке это `<python> -m snapreel ...`, а в собранном
     бинарнике модуля `snapreel` для интерпретатора не существует — там сам
     исполняемый файл принимает подкоманду.
     """
     if is_frozen():
-        argv = [sys.executable, "record"]
-    else:
-        argv = [_windowless_python(), "-m", "snapreel", "record"]
-    if as_gif:
-        argv.append("--gif")
-    return argv
+        return [sys.executable, *arguments]
+    return [_windowless_python(), "-m", "snapreel", *arguments]
+
+
+def launch_argv(as_gif: bool = False) -> list[str]:
+    """Команда, которую вешаем на хоткей."""
+    return argv_for("record", "--gif") if as_gif else argv_for("record")
+
+
+def tray_argv() -> list[str]:
+    """Команда резидента с иконкой в трее — она же уходит в автозапуск."""
+    return argv_for("tray")
 
 
 def _windowless_python() -> str:
@@ -264,20 +279,36 @@ def windows_shortcut_path() -> Path:
     return base / "Microsoft" / "Windows" / "Start Menu" / "Programs" / SHORTCUT_NAME
 
 
-def windows_shortcut_script(path: Path, hotkey: str) -> str:
-    """Ярлык в меню «Пуск»: только там Windows слушает его свойство Hotkey."""
-    argv = launch_argv()
+def windows_startup_path() -> Path:
+    """Автозагрузка Windows: всё, что лежит в этой папке, стартует при входе."""
+    base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    return base / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / STARTUP_NAME
+
+
+def windows_shortcut_script(
+    path: Path,
+    hotkey: str | None = None,
+    argv: list[str] | None = None,
+    description: str = "Snapreel — записать область экрана",
+) -> str:
+    """Скрипт создания ярлыка. Свойство Hotkey живёт только у ярлыка в «Пуске».
+
+    Windows слушает комбинацию у ярлыков меню «Пуск»; у ярлыка в автозагрузке
+    оно бессмысленно, поэтому хоткей необязателен.
+    """
+    argv = argv or launch_argv()
     arguments = quote(argv[1:])
-    return (
+    script = (
         "$shell = New-Object -ComObject WScript.Shell; "
         f"$link = $shell.CreateShortcut('{path}'); "
         f"$link.TargetPath = '{argv[0]}'; "
         f"$link.Arguments = '{arguments}'; "
         f"$link.WorkingDirectory = '{Path.home()}'; "
-        "$link.Description = 'Snapreel — записать область экрана'; "
-        f"$link.Hotkey = '{to_windows(hotkey)}'; "
-        "$link.Save()"
+        f"$link.Description = '{description}'; "
     )
+    if hotkey:
+        script += f"$link.Hotkey = '{to_windows(hotkey)}'; "
+    return script + "$link.Save()"
 
 
 def _powershell(script: str) -> None:
@@ -319,14 +350,13 @@ def launch_agent_path() -> Path:
 
 
 def daemon_argv() -> list[str]:
-    """Команда демона: у собранного бинарника нет модуля для `-m`."""
-    if is_frozen():
-        return [sys.executable, "daemon"]
-    return [sys.executable, "-m", "snapreel", "daemon"]
+    """Команда демона без трея — остаётся для тех, кому иконка не нужна."""
+    return argv_for("daemon")
 
 
 def launch_agent_plist() -> str:
-    arguments = "\n".join(f"        <string>{part}</string>" for part in daemon_argv())
+    """LaunchAgent поднимает трей: он и хоткеи слушает, и виден в строке меню."""
+    arguments = "\n".join(f"        <string>{part}</string>" for part in tray_argv())
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -347,6 +377,78 @@ def launch_agent_plist() -> str:
 """
 
 
+# --- автозапуск иконки в трее ---------------------------------------------
+
+
+def desktop_entry_path() -> Path:
+    base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return base / "autostart" / DESKTOP_ENTRY_NAME
+
+
+def desktop_entry() -> str:
+    """`.desktop` в `~/.config/autostart` — общий способ у GNOME, KDE и Sway."""
+    return (
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Snapreel\n"
+        "Comment=Запись области экрана в буфер обмена\n"
+        f"Exec={quote(tray_argv())}\n"
+        "Terminal=false\n"
+        "X-GNOME-Autostart-enabled=true\n"
+    )
+
+
+def autostart_enabled(env: Environment | None = None) -> bool:
+    """Прописан ли трей в автозапуск. Это спрашивает меню, поэтому не бросает."""
+    env = env or detect()
+    try:
+        if env.platform is Platform.WINDOWS:
+            return windows_startup_path().is_file()
+        if env.platform is Platform.MACOS:
+            return launch_agent_path().is_file()
+        return desktop_entry_path().is_file()
+    except OSError:
+        return False
+
+
+def install_autostart(env: Environment | None = None) -> Outcome:
+    """Просит систему поднимать трей при входе."""
+    env = env or detect()
+    try:
+        if env.platform is Platform.WINDOWS:
+            path = windows_startup_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _powershell(
+                windows_shortcut_script(
+                    path, argv=tray_argv(), description="Snapreel — иконка в трее"
+                )
+            )
+            return Outcome(True, f"трей будет стартовать при входе: {path}")
+        if env.platform is Platform.MACOS:
+            return install_launch_agent()
+        path = desktop_entry_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(desktop_entry(), encoding="utf-8")
+        return Outcome(True, f"трей будет стартовать при входе: {path}")
+    except (HotkeySetupError, OSError, subprocess.SubprocessError) as exc:
+        return Outcome(False, f"не прописать автозапуск: {exc}")
+
+
+def remove_autostart(env: Environment | None = None) -> Outcome:
+    """Обратная операция к `install_autostart`; отсутствие записи — не ошибка."""
+    env = env or detect()
+    try:
+        if env.platform is Platform.MACOS:
+            return remove_launch_agent()
+        path = windows_startup_path() if env.platform is Platform.WINDOWS else desktop_entry_path()
+        if not path.is_file():
+            return Outcome(True, "автозапуск snapreel не найден")
+        path.unlink()
+        return Outcome(True, f"автозапуск убран: {path}")
+    except (OSError, subprocess.SubprocessError) as exc:
+        return Outcome(False, f"не убрать автозапуск: {exc}")
+
+
 def _macos_hint(hotkey: str) -> Outcome:
     """У macOS нет открытого API для чужих глобальных хоткеев: демон или Automator."""
     return Outcome(
@@ -354,7 +456,7 @@ def _macos_hint(hotkey: str) -> Outcome:
         "в macOS системный хоткей назначается вручную: Automator → Быстрое действие → "
         f"«Запустить shell-скрипт» с командой {quote(launch_argv())}, затем Системные "
         "настройки → Клавиатура → Сочетания клавиш → Службы. "
-        f"Либо `snapreel autostart` — демон с хоткеем {hotkey} в автозапуске.",
+        f"Либо `snapreel autostart` — иконка в трее с хоткеем {hotkey} в автозапуске.",
     )
 
 
@@ -372,7 +474,7 @@ def install_launch_agent() -> Outcome:
     )
     if result.returncode != 0:
         return Outcome(False, result.stderr.strip() or "launchctl load не сработал")
-    return Outcome(True, f"демон в автозапуске: {path}")
+    return Outcome(True, f"трей в автозапуске: {path}")
 
 
 def remove_launch_agent() -> Outcome:

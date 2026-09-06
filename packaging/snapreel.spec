@@ -21,15 +21,25 @@ hidden = [
     "snapreel.backends.macos",
     "snapreel.selector",
     "snapreel.indicator",
+    "snapreel.tray",
     "tkinter",
 ]
 
-# pynput нужен только команде daemon; если его нет в окружении сборки,
-# бинарник всё равно должен собраться
+# pynput нужен хоткеям трея и команде daemon; если его нет в окружении
+# сборки, бинарник всё равно должен собраться
 try:
     import pynput  # noqa: F401
 
     hidden.append("pynput")
+except ImportError:
+    pass
+
+# то же для иконки в трее: без pystray собирается бинарник без трея, и это
+# честнее, чем упасть на сборке
+try:
+    import pystray  # noqa: F401
+
+    hidden += ["pystray", "PIL", "PIL.Image", "PIL.ImageDraw"]
 except ImportError:
     pass
 
@@ -49,7 +59,8 @@ analysis = Analysis(
     hiddenimports=hidden,
     hookspath=[],
     runtime_hooks=[],
-    excludes=["numpy", "PIL", "pytest"],
+    # PIL исключается только там, где трея в сборке нет: иконку рисует он
+    excludes=["numpy", "pytest"] + ([] if "PIL" in hidden else ["PIL"]),
     cipher=block_cipher,
     noarchive=False,
 )

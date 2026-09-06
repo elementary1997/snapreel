@@ -79,7 +79,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[daemon]" pyinstaller
+          pip install -e ".[tray]" pyinstaller
 
       - name: Build
         working-directory: packaging
@@ -123,6 +123,13 @@ jobs:
           cat doctor.txt
           if grep -qE '^ffmpeg +НЕ НАЙДЕН' doctor.txt; then
             echo "вшитый ffmpeg не нашёлся"; exit 1
+          fi
+
+          # то же про иконку в трее: забытый hiddenimport не виден ни на
+          # сборке, ни на тестах — только у пользователя, который запустил
+          # трей и не дождался иконки
+          if ! grep -qE '^pystray +есть' doctor.txt; then
+            echo "в бинарник не попал pystray — иконки в трее не будет"; exit 1
           fi
 
       - name: Record a clip with the bundled ffmpeg

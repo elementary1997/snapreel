@@ -13,3 +13,7 @@ class SelectionCancelled(RuntimeError):
 
 class OverlayUnavailable(RuntimeError):
     """Оверлей показать нечем — нет tkinter или нет доступа к дисплею."""
+
+
+class TrayUnavailable(RuntimeError):
+    """Иконку в трее показать нечем — нет pystray или нет самого трея."""
