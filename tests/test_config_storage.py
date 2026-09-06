@@ -92,3 +92,17 @@ def test_prune_disabled_by_zero(tmp_path):
     os.utime(clip, (stale, stale))
     assert storage.prune(cfg) == []
     assert clip.exists()
+
+
+def test_a_windows_path_survives_a_round_trip_through_the_config():
+    """Окно настроек кладёт в конфиг что угодно, а прочитаться должно всё."""
+    import tomllib
+
+    config = Config()
+    config.output_dir = "C:\\Users\\Мария\\Videos"
+    config.filename_template = 'с "кавычкой" и \\ слешем'
+
+    restored = tomllib.loads(config_module.to_toml(config))
+
+    assert restored["output_dir"] == config.output_dir
+    assert restored["filename_template"] == config.filename_template

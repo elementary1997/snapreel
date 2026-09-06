@@ -165,13 +165,36 @@ def _apply_env(config: Config) -> None:
             setattr(config, field.name, raw)
 
 
+def escape_toml(value: str) -> str:
+    """Строка в кавычках, которую `tomllib` прочитает обратно.
+
+    Записанное сюда приходит из полей окна настроек, то есть от человека:
+    путь Windows целиком состоит из обратных слешей, а слеш перед буквой TOML
+    считает началом escape-последовательности и роняет разбор всего файла.
+    Нечитаемый конфиг — это отказ каждой следующей команды, включая ту,
+    которой его чинят.
+    """
+    out = ['"']
+    for char in value:
+        if char in ('"', "\\"):
+            out.append("\\" + char)
+        elif char in "\n\r\t":
+            out.append({"\n": "\\n", "\r": "\\r", "\t": "\\t"}[char])
+        elif ord(char) < 0x20 or ord(char) == 0x7F:
+            out.append(f"\\u{ord(char):04X}")
+        else:
+            out.append(char)
+    out.append('"')
+    return "".join(out)
+
+
 def to_toml(config: Config) -> str:
     lines = [f"# {config_path()}", ""]
     for key, value in asdict(config).items():
         if isinstance(value, bool):
             rendered = "true" if value else "false"
         elif isinstance(value, str):
-            rendered = f'"{value}"'
+            rendered = escape_toml(value)
         else:
             rendered = str(value)
         lines.append(f"{key} = {rendered}")

@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import pathlib
 
 import pytest
 
@@ -198,6 +199,27 @@ def test_a_failed_install_puts_the_old_binary_back(tmp_path, monkeypatch):
         updates.install(new, running)
 
     assert running.read_bytes() == "старое".encode()
+
+
+def test_an_interrupted_copy_leaves_the_working_binary_alone(tmp_path, monkeypatch):
+    """Место на диске кончилось на середине — прежний бинарник обязан уцелеть."""
+    running = tmp_path / "snapreel"
+    running.write_bytes(b"CTAPOE" * 200)
+    new = tmp_path / "new" / "snapreel"
+    new.parent.mkdir()
+    new.write_bytes(b"HOBOE" * 200)
+
+    def half_way(source, target, **kwargs):
+        pathlib.Path(target).write_bytes(pathlib.Path(source).read_bytes()[:20])
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(updates.shutil, "copy2", half_way)
+
+    with pytest.raises(updates.UpdateError):
+        updates.install(new, running)
+
+    assert running.read_bytes() == b"CTAPOE" * 200
+    assert not (tmp_path / "snapreel.new").exists()
 
 
 def test_the_leftover_copy_is_cleaned_on_the_next_run(tmp_path):

@@ -238,7 +238,17 @@ class TrayApp:
         self._threads.append(_start(lambda: self._check(force)))
 
     def _check(self, force: bool) -> None:
-        if not self.config.check_updates or not updates.supported():
+        """`force` — это нажатие в меню: у него обязан быть видимый исход.
+
+        Суточный цикл, наоборот, молчит обо всём, кроме найденной версии, и
+        подчиняется переключателю `check_updates`; ручная проверка выключателю
+        автоматики не подчиняется — так же ведёт себя кнопка в настройках.
+        """
+        if not force and not self.config.check_updates:
+            return
+        if not updates.supported():
+            if force:
+                self._notify("snapreel", "обновлять умеем только готовый бинарник")
             return
         directory = (self.config_path or config_module.config_path()).parent
         try:
@@ -246,8 +256,12 @@ class TrayApp:
         except updates.UpdateError as exc:
             # github недоступен — это не повод шуметь окном или гасить трей
             print(f"snapreel: {exc}", file=sys.stderr)
+            if force:
+                self._notify("snapreel", str(exc))
             return
         if release is None:
+            if force:
+                self._notify("snapreel", "установлена последняя версия")
             return
         self._release = release
         self._notify("snapreel", f"вышла версия {release.name} — обновить можно из меню")

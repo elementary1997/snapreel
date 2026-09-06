@@ -229,14 +229,51 @@ def test_a_refused_autostart_is_explained(tray_app, monkeypatch):
 # --- обновления -----------------------------------------------------------
 
 
-def test_the_update_check_is_skipped_when_the_user_turned_it_off(tray_app, monkeypatch):
+def test_the_daily_check_is_skipped_when_the_user_turned_it_off(tray_app, monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("check_updates = false, а в сеть всё равно пошли")
 
+    monkeypatch.setattr(tray.updates, "supported", lambda: True)
     monkeypatch.setattr(tray.updates, "check", forbidden)
     tray_app.app.config.check_updates = False
+
+    tray_app.app._check(force=False)
+
+
+def test_a_manual_check_says_that_the_version_is_current(tray_app, monkeypatch):
+    """У нажатия в меню обязан быть видимый исход, даже когда всё свежее."""
+    monkeypatch.setattr(tray.updates, "supported", lambda: True)
+    monkeypatch.setattr(tray.updates, "check", lambda directory, force=False: None)
+
     tray_app.app.check_updates()
     tray_app.app.join()
+
+    assert tray_app.notes == ["установлена последняя версия"]
+
+
+def test_a_manual_check_reports_an_unreachable_github(tray_app, monkeypatch):
+    def fail(directory, force=False):
+        raise UpdateError("не спросить github об обновлениях")
+
+    monkeypatch.setattr(tray.updates, "supported", lambda: True)
+    monkeypatch.setattr(tray.updates, "check", fail)
+
+    tray_app.app.check_updates()
+    tray_app.app.join()
+
+    assert tray_app.notes == ["не спросить github об обновлениях"]
+
+
+def test_a_manual_check_works_even_with_the_daily_one_off(tray_app, monkeypatch):
+    """Переключатель выключает автоматику, а не саму кнопку."""
+    monkeypatch.setattr(tray.updates, "supported", lambda: True)
+    monkeypatch.setattr(tray.updates, "check", lambda directory, force=False: RELEASE)
+    tray_app.app.config.check_updates = False
+
+    tray_app.app.check_updates()
+    tray_app.app.join()
+
+    assert tray_app.item("update").label == "Обновить до 9.9.9"
 
 
 def test_a_found_release_becomes_a_menu_item(tray_app, monkeypatch):
@@ -377,3 +414,28 @@ def test_the_cli_explains_a_missing_tray(monkeypatch, capsys, tmp_path):
     printed = capsys.readouterr().err
     assert "нет pystray" in printed
     assert "daemon" in printed
+
+
+def test_a_broken_hotkey_in_the_config_does_not_take_down_the_tray(monkeypatch, capsys, tmp_path):
+    """Испорченное значение в конфиге не должно уносить с собой иконку."""
+    pytest.importorskip("pynput", reason="хоткеи ставятся экстрой .[tray]")
+    config = Config()
+    config.hotkey_mp4 = "мусор+"
+    app = tray.TrayApp(config, tmp_path / "config.toml", ENV, launcher=lambda argv: None)
+
+    app.bind_hotkeys()  # молча пережить, а не бросить
+
+    assert "горячие клавиши не слушаем" in capsys.readouterr().err
+
+
+def test_an_unparsable_hotkey_comes_out_as_our_own_error(tmp_path):
+    from snapreel.hotkeys import HotkeyError, listen
+
+    pytest.importorskip("pynput", reason="хоткеи ставятся экстрой .[tray]")
+    config = Config()
+    config.hotkey_mp4 = "мусор+"
+
+    with pytest.raises(HotkeyError) as failure:
+        listen(config, lambda as_gif: None, ENV)
+
+    assert "не разобрать" in str(failure.value)

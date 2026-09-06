@@ -216,23 +216,49 @@ def download(release: Release, into: Path, progress=None) -> Path:
 def install(new_binary: Path, running: Path | None = None) -> Path:
     """Ставит скачанное на место работающего бинарника.
 
-    Работающий файл сначала отодвигается, а не удаляется: на Windows удалить
+    Новый файл сначала кладётся рядом целиком и только потом переименовывается
+    на место. Копирование обрывается на середине (кончилось место, отвалился
+    диск), и копирование прямо поверх рабочего файла оставило бы на его месте
+    обрубок — то есть отняло бы у человека и новую версию, и старую.
+    Переименование в пределах каталога так не умеет: оно либо произошло, либо
+    нет.
+
+    Работающий файл при этом отодвигается, а не удаляется: на Windows удалить
     запущенный exe нельзя, а переименовать — можно, и старая копия убирается
     при следующем запуске (`clean_leftovers`).
     """
     running = running or Path(sys.executable)
     backup = running.with_name(running.name + ".old")
+    staged = running.with_name(running.name + ".new")
+
     try:
-        backup.unlink(missing_ok=True)
-        os.replace(running, backup)
-        shutil.copy2(new_binary, running)
-        running.chmod(0o755)
+        _drop(staged)
+        shutil.copy2(new_binary, staged)
+        staged.chmod(0o755)
+    except OSError as exc:
+        _drop(staged)  # обрубок рядом с рабочим файлом никому не нужен
+        raise UpdateError(f"не подготовить обновление {running}: {exc}") from exc
+
+    try:
+        _drop(backup)
+        if running.exists():
+            os.replace(running, backup)
+        os.replace(staged, running)
     except OSError as exc:
         # вернуть как было: обновление не удалось, но рабочая копия нужна
+        _drop(staged)
         if backup.exists() and not running.exists():
             os.replace(backup, running)
         raise UpdateError(f"не заменить {running}: {exc}") from exc
     return running
+
+
+def _drop(path: Path) -> None:
+    """Убирает файл, если он есть; неудача уборки не должна затмить причину."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def clean_leftovers(running: Path | None = None) -> None:

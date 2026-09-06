@@ -37,13 +37,27 @@ def listen(config: Config, handler: Callable[[bool], None], env: Environment | N
     except ImportError as exc:
         raise HotkeyError("нужен pynput: pip install 'snapreel[daemon]'") from exc
 
-    listener = keyboard.GlobalHotKeys(
-        {
-            config.hotkey_mp4: lambda: handler(False),
-            config.hotkey_gif: lambda: handler(True),
-        }
-    )
-    listener.start()
+    try:
+        listener = keyboard.GlobalHotKeys(
+            {
+                config.hotkey_mp4: lambda: handler(False),
+                config.hotkey_gif: lambda: handler(True),
+            }
+        )
+        listener.start()
+    except ValueError as exc:
+        # pynput разбирает комбинации сам и бросает своё ValueError; наружу
+        # такое значение конфига обязано выходить объяснимой ошибкой, а не
+        # трейсбеком — конфиг правится руками, и испортить его несложно
+        raise HotkeyError(
+            f"комбинацию из конфига не разобрать ({exc}). "
+            "Поправьте её в окне настроек или командой `snapreel hotkey set`."
+        ) from exc
+    except Exception as exc:
+        # у каждой платформы свой отказ: нет дисплея, нет разрешения на
+        # мониторинг ввода, нет прав. Все они значат одно — клавиши слушать
+        # не выйдет, и знать про них должен вызывающий, а не трейсбек
+        raise HotkeyError(f"не перехватить горячие клавиши: {exc}") from exc
     return listener
 
 
