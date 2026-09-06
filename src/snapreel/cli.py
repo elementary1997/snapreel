@@ -96,7 +96,14 @@ def main(argv: list[str] | None = None) -> int:
     _make_output_printable()
     parser = build_parser()
     args = parser.parse_args(argv)
-    command = args.command or "record"
+    if args.command is None:
+        # Голый `snapreel` — это `snapreel record`: так его запускают двойным
+        # щелчком по бинарнику. Подкоманда дописывается и разбирается заново,
+        # а не подставляется строкой: без разбора в Namespace нет флагов
+        # record, и запись падает AttributeError на первом же `args.region`.
+        argv = sys.argv[1:] if argv is None else argv
+        args = parser.parse_args([*argv, "record"])
+    command = args.command
 
     try:
         cfg = config_module.load(args.config)

@@ -49,9 +49,28 @@ jobs:
       - name: Smoke test the binary
         shell: bash
         run: |
+          bin="./dist/snapreel${{ runner.os == 'Windows' && '.exe' || '' }}"
+
           # бинарник обязан отвечать без установленного Python-окружения
-          ./dist/snapreel${{ runner.os == 'Windows' && '.exe' || '' }} --help
-          ./dist/snapreel${{ runner.os == 'Windows' && '.exe' || '' }} hotkey show
+          "$bin" --help
+          "$bin" hotkey show
+
+          # голый запуск — так бинарник стартует по двойному щелчку, и только
+          # этот путь проходит через разбор аргументов записи. ffmpeg подменён
+          # заведомо отсутствующим, чтобы отказ пришёл до оверлея выделения:
+          # проверяем, что наружу выходит своё сообщение, а не трейсбек
+          set +e
+          bare="$(SNAPREEL_FFMPEG=snapreel-no-such-binary "$bin" 2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$bare"
+          case "$bare" in
+            *Traceback*) echo "трейсбек вместо сообщения пользователю"; exit 1;;
+          esac
+          case "$code" in
+            1 | 2) ;;
+            *) echo "ожидался отказ с кодом 1 или 2, получен $code"; exit 1;;
+          esac
 
       - name: Rename
         shell: bash

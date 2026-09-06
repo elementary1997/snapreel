@@ -519,3 +519,36 @@ def test_a_path_with_undecodable_bytes_still_prints(monkeypatch):
 
     stream.flush()
     assert b".mp4" in stream.buffer.getvalue()
+
+
+# --- голый вызов без подкоманды пишет клип -------------------------------
+
+
+def test_bare_invocation_records_a_clip(wired, tmp_path, monkeypatch, capsys):
+    """Двойной щелчок по бинарнику зовёт snapreel без единого аргумента."""
+    wired()
+    monkeypatch.setattr(recorder, "select_region", lambda env: Region(0, 0, 100, 100))
+    config = tmp_path / "config.toml"
+    config.write_text(
+        f'output_dir = "{(tmp_path / "clips").as_posix()}"\nnotify = false\n', encoding="utf-8"
+    )
+
+    code = cli.main(["--config", str(config)])
+
+    assert code == 0
+    assert "Traceback" not in capsys.readouterr().err
+    assert list((tmp_path / "clips").glob("*.mp4"))
+
+
+def test_bare_invocation_reads_argv_when_none_is_given(wired, tmp_path, monkeypatch):
+    """Бинарник зовёт main() без аргументов — подкоманда дописывается к sys.argv."""
+    wired()
+    monkeypatch.setattr(recorder, "select_region", lambda env: Region(0, 0, 100, 100))
+    config = tmp_path / "config.toml"
+    config.write_text(
+        f'output_dir = "{(tmp_path / "clips").as_posix()}"\nnotify = false\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(sys, "argv", ["snapreel", "--config", str(config)])
+
+    assert cli.main() == 0
+    assert list((tmp_path / "clips").glob("*.mp4"))
