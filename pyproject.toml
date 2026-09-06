@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "snapreel"
-version = "0.5.0"
+version = "0.5.1"
 description = "Запись видео выделенной области экрана по хоткею с копированием файла в буфер обмена"
 readme = "README.md"
 requires-python = ">=3.11"
