@@ -11,6 +11,7 @@
 | [0003](0003-drive-ffmpeg-as-a-subprocess.md) | Захват и кодирование — внешним процессом ffmpeg | Accepted | 2026-09-05 |
 | [0004](0004-system-hotkey-over-daemon.md) | Основной способ вызова — системный хоткей, демон вторичен | Accepted | 2026-09-05 |
 | [0005](0005-tkinter-for-overlays.md) | Оверлеи выделения и записи — на tkinter | Accepted | 2026-09-05 |
+| [0006](0006-bundle-a-minimal-ffmpeg.md) | В релизные бинарники вшивается свой минимальный ffmpeg | Accepted | 2026-09-06 |
 
 ## Что заслуживает ADR
 

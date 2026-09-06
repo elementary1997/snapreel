@@ -19,14 +19,14 @@ class GdigrabBackend(CaptureBackend):
 
     def preflight(self) -> list[str]:
         return require_binary(
-            self.config.ffmpeg,
+            self.config.ffmpeg_path,
             "поставьте ffmpeg: winget install Gyan.FFmpeg",
         )
 
     def build_command(self, region: Region, output: Path, duration: float) -> list[str]:
         cfg = self.config
         command = [
-            cfg.ffmpeg,
+            cfg.ffmpeg_path,
             "-hide_banner",
             "-loglevel",
             "error",

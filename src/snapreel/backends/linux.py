@@ -13,7 +13,7 @@ class X11GrabBackend(CaptureBackend):
     name = "x11grab"
 
     def preflight(self) -> list[str]:
-        problems = require_binary(self.config.ffmpeg, "sudo apt install ffmpeg")
+        problems = require_binary(self.config.ffmpeg_path, "sudo apt install ffmpeg")
         if not os.environ.get("DISPLAY"):
             problems.append("не задан DISPLAY — нет доступа к X-серверу")
         return problems
@@ -22,7 +22,7 @@ class X11GrabBackend(CaptureBackend):
         cfg = self.config
         display = os.environ.get("DISPLAY", ":0")
         command = [
-            cfg.ffmpeg,
+            cfg.ffmpeg_path,
             "-hide_banner",
             "-loglevel",
             "error",

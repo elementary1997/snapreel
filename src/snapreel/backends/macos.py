@@ -29,7 +29,7 @@ class AvFoundationBackend(CaptureBackend):
     name = "avfoundation"
 
     def preflight(self) -> list[str]:
-        return require_binary(self.config.ffmpeg, "brew install ffmpeg")
+        return require_binary(self.config.ffmpeg_path, "brew install ffmpeg")
 
     def screen_index(self) -> int:
         if self.config.screen_index >= 0:
@@ -59,7 +59,7 @@ class AvFoundationBackend(CaptureBackend):
             else f"{self.screen_index()}:none"
         )
         command = [
-            cfg.ffmpeg,
+            cfg.ffmpeg_path,
             "-hide_banner",
             "-loglevel",
             "error",
@@ -89,7 +89,7 @@ class AvFoundationBackend(CaptureBackend):
     def _list_devices(self) -> str:
         result = subprocess.run(
             [
-                self.config.ffmpeg,
+                self.config.ffmpeg_path,
                 "-hide_banner",
                 "-f",
                 "avfoundation",
@@ -128,7 +128,7 @@ class AvFoundationBackend(CaptureBackend):
         try:
             result = subprocess.run(
                 [
-                    self.config.ffmpeg,
+                    self.config.ffmpeg_path,
                     "-hide_banner",
                     "-f",
                     "avfoundation",

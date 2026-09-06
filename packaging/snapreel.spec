@@ -2,10 +2,12 @@
 #
 #   pyinstaller packaging/snapreel.spec --noconfirm
 #
-# ffmpeg намеренно НЕ бандлится: это +80 МБ к каждому артефакту и отдельные
-# лицензионные условия у сборок с libx264. Пользователь ставит его сам —
-# `snapreel setup` умеет это сделать (см. ADR-0003).
+# ffmpeg вшивается в релизные бинарники: путь к собранному
+# `scripts/build-ffmpeg.sh` приходит в SNAPREEL_BUNDLE_FFMPEG (см. ADR-0006).
+# Без этой переменной получается прежняя сборка, которая ищет ffmpeg в PATH, —
+# именно так собирается `make build` из исходников.
 
+import os
 import sys
 
 block_cipher = None
@@ -31,10 +33,18 @@ try:
 except ImportError:
     pass
 
+binaries = []
+_bundled_ffmpeg = os.environ.get("SNAPREEL_BUNDLE_FFMPEG")
+if _bundled_ffmpeg:
+    if not os.path.isfile(_bundled_ffmpeg):
+        raise SystemExit(f"SNAPREEL_BUNDLE_FFMPEG указывает в никуда: {_bundled_ffmpeg}")
+    # корень распакованного бандла: там его ищет snapreel.bundled.binary
+    binaries.append((_bundled_ffmpeg, "."))
+
 analysis = Analysis(
     ["entrypoint.py"],
     pathex=["../src"],
-    binaries=[],
+    binaries=binaries,
     datas=[],
     hiddenimports=hidden,
     hookspath=[],

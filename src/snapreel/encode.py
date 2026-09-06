@@ -50,7 +50,7 @@ def to_gif(source: Path, target: Path, config: Config) -> Path:
         "[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle"
     )
     command = [
-        config.ffmpeg,
+        config.ffmpeg_path,
         "-hide_banner",
         "-loglevel",
         "error",

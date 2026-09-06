@@ -37,6 +37,45 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      # ffmpeg вшивается в бинарник, поэтому сначала собирается он сам.
+      # Готовые сборки весят под 140 МБ — своя, только с нужным, около шести
+      # (ADR-0006). Результат кешируется по содержимому сборочного скрипта:
+      # пока он не менялся, релиз не пересобирает ffmpeg заново.
+      - name: FFmpeg build deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm xvfb \
+            libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev libasound2-dev
+
+      - name: FFmpeg build deps (macOS)
+        if: runner.os == 'macOS'
+        run: brew install nasm pkg-config
+
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: MINGW64
+          install: >-
+            base-devel mingw-w64-x86_64-gcc mingw-w64-x86_64-nasm
+            make diffutils pkgconf tar
+
+      - name: Cache ffmpeg
+        id: ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: build/ffmpeg-bin
+          key: ffmpeg-${{ matrix.label }}-${{ hashFiles('scripts/build-ffmpeg.sh') }}
+
+      - name: Build ffmpeg
+        if: steps.ffmpeg.outputs.cache-hit != 'true' && runner.os != 'Windows'
+        run: ./scripts/build-ffmpeg.sh
+
+      - name: Build ffmpeg (msys2)
+        if: steps.ffmpeg.outputs.cache-hit != 'true' && runner.os == 'Windows'
+        shell: msys2 {0}
+        run: ./scripts/build-ffmpeg.sh
+
       - name: Install
         run: |
           python -m pip install --upgrade pip
@@ -44,6 +83,9 @@ jobs:
 
       - name: Build
         working-directory: packaging
+        env:
+          SNAPREEL_BUNDLE_FFMPEG: >-
+            ${{ github.workspace }}/build/ffmpeg-bin/ffmpeg${{ runner.os == 'Windows' && '.exe' || '' }}
         run: pyinstaller snapreel.spec --noconfirm --distpath ../dist
 
       - name: Smoke test the binary
@@ -71,6 +113,24 @@ jobs:
             1 | 2) ;;
             *) echo "ожидался отказ с кодом 1 или 2, получен $code"; exit 1;;
           esac
+
+          # ffmpeg лежит внутри бинарника, а не в PATH: doctor обязан найти его
+          # там же, где его будет искать запись
+          if "$bin" doctor | grep -E '^ffmpeg .*НЕ НАЙДЕН'; then
+            echo "вшитый ffmpeg не нашёлся"; exit 1
+          fi
+
+      - name: Record a clip with the bundled ffmpeg
+        if: runner.os == 'Linux'
+        env:
+          XDG_SESSION_TYPE: x11
+        run: |
+          # единственный раннер, которому можно поднять экран: здесь бандл
+          # проверяется целиком — захват, libx264 и mp4 без внешних утилит
+          xvfb-run --server-args="-screen 0 1280x720x24" \
+            ./dist/snapreel record --region 640x480+0+0 --seconds 2 --min-seconds 0 \
+              --no-indicator --output-dir "$RUNNER_TEMP/clips" || true
+          test -s "$RUNNER_TEMP"/clips/*.mp4
 
       - name: Rename
         shell: bash

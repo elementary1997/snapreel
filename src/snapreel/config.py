@@ -8,9 +8,10 @@ import tomllib
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
-from . import naming
+from . import bundled, naming
 
 APP_NAME = "snapreel"
+DEFAULT_FFMPEG = "ffmpeg"
 
 
 @dataclass
@@ -42,9 +43,21 @@ class Config:
     hotkey_gif: str = "<ctrl>+<shift>+<alt>+g"
 
     # прочее
-    ffmpeg: str = "ffmpeg"
+    ffmpeg: str = DEFAULT_FFMPEG
     ffprobe: str = "ffprobe"
     notify: bool = True
+
+    @property
+    def ffmpeg_path(self) -> str:
+        """Чем запускать ffmpeg: указанный пользователем важнее вшитого.
+
+        Путь внутрь распакованного бандла живёт только здесь и не попадает ни
+        в `snapreel config`, ни в сохранённый файл: временный каталог у
+        каждого запуска свой, и записанный в конфиг он назавтра соврёт.
+        """
+        if self.ffmpeg != DEFAULT_FFMPEG:
+            return self.ffmpeg
+        return bundled.binary("ffmpeg") or self.ffmpeg
 
     def validate(self) -> None:
         # тип приходит из TOML или из окружения, поэтому проверяется до сравнений:

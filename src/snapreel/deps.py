@@ -109,7 +109,7 @@ def is_satisfied(requirement: Requirement, config: Config | None = None) -> bool
     if requirement.key == "tkinter":
         return find_spec("tkinter") is not None
     if requirement.key == "ffmpeg" and config:
-        return bool(shutil.which(config.ffmpeg))
+        return bool(shutil.which(config.ffmpeg_path))
     return bool(shutil.which(requirement.key))
 
 

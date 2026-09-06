@@ -444,11 +444,15 @@ def _doctor(cfg) -> int:
             "запуск внутри WSL: виден только экран WSLg. Ставьте snapreel на хост Windows."
         )
 
-    for binary in {cfg.ffmpeg, cfg.ffprobe}:
-        found = shutil.which(binary)
-        print(f"{binary:<15} {found or 'НЕ НАЙДЕН'}")
-        if not found:
-            problems.append(f"не найден {binary}")
+    ffmpeg = shutil.which(cfg.ffmpeg_path)
+    print(f"{'ffmpeg':<15} {ffmpeg or 'НЕ НАЙДЕН'}")
+    if not ffmpeg:
+        problems.append(f"не найден {cfg.ffmpeg}")
+
+    # ffprobe только украшает итоговую строку размерами и длительностью, и в
+    # собранный бинарник его не кладут вовсе — это не поломка окружения
+    ffprobe = shutil.which(cfg.ffprobe)
+    print(f"{'ffprobe':<15} {ffprobe or 'нет — размеры и длительность будут неполными'}")
 
     try:
         backend = for_environment(cfg, env)
