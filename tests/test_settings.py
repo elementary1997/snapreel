@@ -123,3 +123,23 @@ def test_an_explicit_record_never_opens_settings(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_record", lambda cfg, args: 0)
 
     assert cli.main(["--config", str(tmp_path / "нет.toml"), "record"]) == 0
+
+
+def test_doctor_reports_a_broken_qt_as_a_problem(tmp_path, monkeypatch, capsys):
+    """`find_spec` находит имя и в пустой сборке — поэтому спрашиваем импортом."""
+    import builtins
+
+    real = builtins.__import__
+
+    def absent(name, *args, **kwargs):
+        if name.startswith("PySide6"):
+            raise ImportError("libQt6Widgets.so.6: cannot open shared object file")
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", absent)
+
+    cli.main(["--config", str(tmp_path / "c.toml"), "doctor"])
+
+    printed = capsys.readouterr().out
+    assert "PySide6         нет" in printed
+    assert "PySide6 не работает" in printed

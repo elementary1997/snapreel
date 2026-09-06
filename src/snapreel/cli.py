@@ -635,10 +635,16 @@ def _doctor(cfg) -> int:
     else:
         print("pynput          нет (нужен трею и `snapreel daemon` для хоткеев)")
 
-    if find_spec("PySide6"):
+    # Спрашиваем импортом, а не `find_spec`: имя модуля находится и в архиве
+    # собранного бинарника, куда библиотеки Qt не попали, — и ответ «есть»
+    # оказывается ответом о пустоте. Импорт виджетов дисплея не требует.
+    try:
+        import PySide6.QtWidgets  # noqa: F401
+
         print("PySide6         есть")
-    else:
+    except Exception as exc:
         print("PySide6         нет (окна и трей не показать: pip install 'snapreel[ui]')")
+        problems.append(f"PySide6 не работает: {exc}")
 
     # Qt на Linux без этой библиотеки не поднимает окно вовсе, и понять это
     # по своему опыту человек не может: окно просто не появляется
