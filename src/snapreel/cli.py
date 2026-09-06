@@ -21,6 +21,25 @@ from .recorder import record
 PROG = "snapreel"
 
 
+def _make_output_printable() -> None:
+    """Весь вывод snapreel — русский, а кодировка потока может его не взять.
+
+    На Windows перенаправленный stdout берёт кодировку локали (cp1252 в
+    английской системе), и первая же кириллическая буква роняет команду
+    UnicodeEncodeError — даже `--help` внутри argparse. UTF-8 берёт любой
+    текст, а `errors="replace"` оставлен на случай потока, которому UTF-8
+    назначить не вышло: испорченный символ лучше упавшей команды.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:  # поток подменён на что-то своё
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=PROG,
@@ -72,6 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _make_output_printable()
     parser = build_parser()
     args = parser.parse_args(argv)
     command = args.command or "record"

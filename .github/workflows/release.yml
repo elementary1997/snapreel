@@ -22,7 +22,7 @@ jobs:
           - os: macos-14 # Apple Silicon
             label: macos-arm64
             artifact: snapreel-macos-arm64
-          - os: macos-13 # Intel
+          - os: macos-15-intel # Intel; macos-13 выведен из эксплуатации
             label: macos-x86_64
             artifact: snapreel-macos-x86_64
           - os: windows-latest

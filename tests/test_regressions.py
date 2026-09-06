@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import os
 import pathlib
 import subprocess
@@ -475,3 +476,34 @@ def test_external_output_is_decoded_leniently():
     ]
 
     assert offenders == []
+
+
+# --- вывод переживает консоль, не знающую кириллицы ----------------------
+
+
+def ansi_console():
+    """Перенаправленный stdout на английской Windows: cp1252 и никакой кириллицы."""
+    return io.TextIOWrapper(io.BytesIO(), encoding="cp1252", newline="")
+
+
+def test_help_survives_a_console_without_cyrillic(monkeypatch):
+    stream = ansi_console()
+    monkeypatch.setattr(sys, "stdout", stream)
+
+    with pytest.raises(SystemExit) as exit_code:
+        cli.main(["--help"])
+
+    assert exit_code.value.code == 0
+    stream.flush()
+    assert "буфер" in stream.buffer.getvalue().decode("utf-8")
+
+
+def test_error_message_survives_a_console_without_cyrillic(monkeypatch, tmp_path):
+    stream = ansi_console()
+    monkeypatch.setattr(sys, "stderr", stream)
+
+    code = cli.main(["--config", str(tmp_path / "c.toml"), "record", "--region", "boom"])
+
+    assert code == 2
+    stream.flush()
+    assert "геометрию" in stream.buffer.getvalue().decode("utf-8")
