@@ -52,6 +52,25 @@ class FakeBackend:
 
 
 @pytest.fixture
+def need():
+    """Пропускает тест, когда модуль не поставлен или требует дисплея.
+
+    `pytest.importorskip` тут не годится: без `DISPLAY` pystray и pynput
+    бросают не `ModuleNotFoundError`, а свои ошибки подключения к X-серверу,
+    а прогон обязан оставаться headless.
+    """
+    import importlib
+
+    def require(module: str):
+        try:
+            return importlib.import_module(module)
+        except Exception as exc:  # ImportError, Xlib.error.*, что угодно ещё
+            pytest.skip(f"{module} недоступен здесь: {exc}")
+
+    return require
+
+
+@pytest.fixture
 def wired(monkeypatch, tmp_path):
     """Подменяет всё, что требует живого экрана."""
     backends = {}

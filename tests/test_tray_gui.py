@@ -83,11 +83,11 @@ class SystemTray:
 
 
 @pytest.fixture
-def system_tray():
-    pytest.importorskip("Xlib", reason="нужен python-xlib, он приходит с pystray")
-    pytest.importorskip("pystray", reason="иконка ставится экстрой .[tray]")
+def system_tray(need):
     if not os.environ.get("DISPLAY"):
         pytest.skip("нужен X-сервер: xvfb-run pytest -m gui")
+    need("Xlib")  # приходит вместе с pystray на Linux
+    need("pystray")
     tray = SystemTray()
     yield tray
     tray.close()

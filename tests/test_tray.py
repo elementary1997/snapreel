@@ -12,6 +12,8 @@ from snapreel.platform_info import Environment, Platform
 from snapreel.updates import Release, UpdateError
 
 ENV = Environment(platform=Platform.LINUX_X11, is_wsl=False)
+
+
 RELEASE = Release(
     version=(9, 9, 9),
     tag="v9.9.9",
@@ -322,8 +324,8 @@ def test_a_failed_install_keeps_the_update_offered(tray_app, monkeypatch):
 # --- pystray --------------------------------------------------------------
 
 
-def test_the_menu_translates_to_pystray(tray_app):
-    pytest.importorskip("pystray", reason="иконка ставится экстрой .[tray]")
+def test_the_menu_translates_to_pystray(tray_app, need):
+    need("pystray")
     menu = tray.build_menu(tray_app.app)
     labels = [str(entry.text) for entry in menu.items if entry.text]
     assert "Настройки…" in labels
@@ -417,8 +419,11 @@ def test_the_cli_explains_a_missing_tray(monkeypatch, capsys, tmp_path):
 
 
 def test_a_broken_hotkey_in_the_config_does_not_take_down_the_tray(monkeypatch, capsys, tmp_path):
-    """Испорченное значение в конфиге не должно уносить с собой иконку."""
-    pytest.importorskip("pynput", reason="хоткеи ставятся экстрой .[tray]")
+    """Испорченное значение в конфиге не должно уносить с собой иконку.
+
+    Тест не требует ни pynput, ни дисплея: их отсутствие — такой же отказ
+    хоткеев, и трей обязан пережить любой из них одинаково.
+    """
     config = Config()
     config.hotkey_mp4 = "мусор+"
     app = tray.TrayApp(config, tmp_path / "config.toml", ENV, launcher=lambda argv: None)
@@ -428,10 +433,10 @@ def test_a_broken_hotkey_in_the_config_does_not_take_down_the_tray(monkeypatch, 
     assert "горячие клавиши не слушаем" in capsys.readouterr().err
 
 
-def test_an_unparsable_hotkey_comes_out_as_our_own_error(tmp_path):
+def test_an_unparsable_hotkey_comes_out_as_our_own_error(tmp_path, need):
     from snapreel.hotkeys import HotkeyError, listen
 
-    pytest.importorskip("pynput", reason="хоткеи ставятся экстрой .[tray]")
+    need("pynput")  # разбирает комбинацию он, а без дисплея не поднимется
     config = Config()
     config.hotkey_mp4 = "мусор+"
 
