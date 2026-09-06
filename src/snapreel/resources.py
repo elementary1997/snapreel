@@ -34,6 +34,11 @@ def icon(recording: bool = False) -> Path | None:
     return _find("icon-recording.png" if recording else "icon.png")
 
 
+def arrow(dark: bool) -> Path | None:
+    """Стрелка выпадающего списка под палитру окна."""
+    return _find("arrow-dark.png" if dark else "arrow-light.png")
+
+
 def windows_icon() -> Path | None:
     """ICO со всеми размерами: её просит окно на Windows и сам exe."""
     return _find("icon.ico")

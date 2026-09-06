@@ -100,6 +100,27 @@ def draw(recording: bool = False, size: int = SIZE) -> Image.Image:
     return image.resize((size, size), Image.LANCZOS)
 
 
+def arrow(colour: tuple[int, int, int], size: int = 14) -> Image.Image:
+    """Стрелка выпадающего списка.
+
+    Qt рисует псевдоэлемент `down-arrow` только картинкой: треугольник из
+    рамок, как в CSS, у него получается чёрточкой.
+    """
+    big = size * SUPERSAMPLE
+    image = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    pen = ImageDraw.Draw(image)
+    margin = big * 0.28
+    pen.polygon(
+        [
+            (margin, big * 0.38),
+            (big - margin, big * 0.38),
+            (big / 2, big * 0.68),
+        ],
+        fill=(*colour, 255),
+    )
+    return image.resize((size, size), Image.LANCZOS)
+
+
 def main() -> int:
     ASSETS.mkdir(parents=True, exist_ok=True)
     idle = draw()
@@ -110,7 +131,10 @@ def main() -> int:
     # превращает уголки в кашу
     layers = [draw(size=n) for n in ICO_SIZES]
     layers[-1].save(ICO, sizes=[(n, n) for n in ICO_SIZES], append_images=layers[:-1])
-    print(f"готово: {ASSETS / 'icon.png'}, {ASSETS / 'icon-recording.png'}, {ICO}")
+    # стрелки списков: по одной на палитру, цвет — приглушённый текст темы
+    arrow((107, 116, 128)).save(ASSETS / "arrow-light.png")
+    arrow((152, 160, 173)).save(ASSETS / "arrow-dark.png")
+    print(f"готово: {ASSETS / 'icon.png'}, {ASSETS / 'icon-recording.png'}, {ICO}, стрелки")
     return 0
 
 

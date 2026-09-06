@@ -99,6 +99,16 @@ def resolve(mode: str = "auto", env: Environment | None = None) -> Palette:
     return DARK if prefers_dark(env) else LIGHT
 
 
+def _arrow(palette: Palette) -> str:
+    """Путь к стрелке для QSS; без неё список просто останется без значка."""
+    from . import resources
+
+    path = resources.arrow(palette.dark)
+    if path is None:
+        return ""
+    return f"image: url({path.as_posix()});"
+
+
 def stylesheet(palette: Palette) -> str:
     """Вид всего окна одной таблицей — так его можно прочитать целиком."""
     return f"""
@@ -154,6 +164,9 @@ def stylesheet(palette: Palette) -> str:
         border-color: {palette.accent};
     }}
     QComboBox::drop-down {{ border: none; width: 22px; }}
+    /* стрелку Qt рисует только картинкой: треугольник из рамок, как в CSS,
+       у него выходит чёрточкой */
+    QComboBox::down-arrow {{ {_arrow(palette)} width: 14px; height: 14px; margin-right: 6px; }}
     QComboBox QAbstractItemView {{
         background: {palette.surface};
         border: 1px solid {palette.border};

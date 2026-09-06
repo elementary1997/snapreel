@@ -226,7 +226,15 @@ def _gsettings(*args: str) -> str:
         ["gsettings", *args], capture_output=True, text=True, errors="replace", timeout=15
     )
     if result.returncode != 0:
-        raise HotkeySetupError(result.stderr.strip() or "gsettings вернул ошибку")
+        error = result.stderr.strip()
+        if "no such schema" in error.lower():
+            # среда не GNOME: gsettings есть, а схемы медиа-клавиш нет
+            raise HotkeySetupError(
+                "это окружение не GNOME, назначить комбинацию его средствами нельзя. "
+                "Пока открыт трей, snapreel слушает её сам; чтобы она работала и без "
+                f"трея, привяжите в настройках системы команду {quote(launch_argv())}"
+            )
+        raise HotkeySetupError(error or "gsettings вернул ошибку")
     return result.stdout.strip()
 
 

@@ -35,6 +35,7 @@ def window(qt_app, tmp_path):
 
     widget = SettingsWindow(Config(), tmp_path / "config.toml")
     yield widget
+    widget.close()  # закрытие дожидается фоновых потоков окна
     widget.deleteLater()
     qt_app.processEvents()
 
@@ -261,3 +262,55 @@ def test_a_cancelled_choice_keeps_the_old_path(window, monkeypatch):
     field._pick()
 
     assert field.get() == "/было/так"
+
+
+# --- звуковые устройства --------------------------------------------------
+
+
+def test_the_audio_field_offers_the_devices_of_this_machine(window):
+    """Точное имя устройства человек по памяти не наберёт — оно из списка."""
+    from snapreel.audio import Device
+    from snapreel.settings_ui import AudioBox
+
+    field = window._widgets["audio_device"]
+    assert isinstance(field, AudioBox)
+
+    field._fill([Device("alsa_input.pci", "Микрофон")])
+
+    assert field.itemText(field.count() - 1) == "Микрофон"
+    assert field.itemData(field.count() - 1) == "alsa_input.pci"
+
+
+def test_the_chosen_device_goes_to_the_config_by_its_real_name(window):
+    """В списке показывается человеческое имя, а в конфиг уходит то, что ждёт ffmpeg."""
+    from snapreel.audio import Device
+
+    field = window._widgets["audio_device"]
+    field._fill([Device("2", "[2] Built-in Microphone")])
+    field.setCurrentText("[2] Built-in Microphone")
+
+    assert window._collect()["audio_device"] == "2"
+
+
+def test_a_typed_device_is_kept_as_written(window):
+    """Устройство может называться не так, как его показал ffmpeg."""
+    field = window._widgets["audio_device"]
+    field.setCurrentText("Стерео микшер")
+
+    assert window._collect()["audio_device"] == "Стерео микшер"
+
+
+def test_an_empty_device_means_no_sound(window):
+    field = window._widgets["audio_device"]
+    field.setCurrentText("")
+
+    assert window._collect()["audio_device"] == ""
+
+
+def test_closing_the_window_waits_for_the_audio_thread(window):
+    """Поток, переживший окно, роняет всё приложение — и не там, где виноват."""
+    field = window._widgets["audio_device"]
+
+    window.close()
+
+    assert not field._thread.isRunning()

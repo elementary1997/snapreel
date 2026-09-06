@@ -215,6 +215,77 @@ class DirEdit(QWidget):
             self._edit.setText(chosen)
 
 
+class AudioBox(QComboBox):
+    """Выбор звукового устройства из тех, что есть на машине.
+
+    Список спрашивается у ffmpeg в отдельном потоке: перечисление устройств
+    dshow занимает секунду-другую, и окно не должно её ждать. Поле остаётся
+    редактируемым — устройство может называться не так, как его показал
+    ffmpeg, и вписать своё человек вправе.
+    """
+
+    def __init__(self, value: str, config: Config):
+        super().__init__()
+        self.setEditable(True)
+        self.addItem("", "")  # пусто — звук не пишется
+        if value:
+            self.addItem(value, value)
+        self.setCurrentText(value)
+
+        self._worker = _AudioWorker(config)
+        self._thread = QThread(self)
+        self._worker.moveToThread(self._thread)
+        self._worker.found.connect(self._fill)
+        self._thread.started.connect(self._worker.list_devices)
+        self._thread.finished.connect(self._worker.deleteLater)
+        self._thread.start()
+
+    def _fill(self, devices: list) -> None:
+        chosen = self.currentText()
+        known = {self.itemData(index) for index in range(self.count())}
+        for device in devices:
+            if device.value not in known:
+                self.addItem(device.label, device.value)
+        self.setCurrentText(chosen)
+        self.stop()
+
+    def stop(self) -> None:
+        """Дожидается потока.
+
+        Пережить окно поток не должен: Qt убивает приложение, когда виджет
+        исчезает из-под работающего QThread, и падение приходит не туда, где
+        причина.
+        """
+        if self._thread.isRunning():
+            self._thread.quit()
+            self._thread.wait(3000)
+
+    def text(self) -> str:
+        """Значение для конфига: у выбранного пункта — его, иначе набранное."""
+        index = self.findText(self.currentText())
+        if index >= 0 and self.itemData(index) is not None:
+            return str(self.itemData(index))
+        return self.currentText().strip()
+
+
+class _AudioWorker(QObject):
+    """Спрашивает устройства в стороне от окна: ffmpeg отвечает не мгновенно."""
+
+    found = Signal(list)
+
+    def __init__(self, config: Config):
+        super().__init__()
+        self._config = config
+
+    def list_devices(self) -> None:
+        from . import audio
+
+        try:
+            self.found.emit(audio.devices(self._config))
+        except Exception:  # список — удобство, его неудача не ломает окно
+            self.found.emit([])
+
+
 class _UpdateWorker(QObject):
     """Сеть живёт в отдельном потоке: окно не должно замирать на запросе."""
 
@@ -462,6 +533,8 @@ class SettingsWindow(QDialog):
             return widget
         elif field.kind == "bool":
             return Switch(bool(value), self.palette)
+        elif field.kind == "audio":
+            widget = AudioBox(str(value), self.config)
         elif field.kind == "choice":
             widget = QComboBox()
             widget.addItems(list(field.choices))
@@ -476,6 +549,13 @@ class SettingsWindow(QDialog):
     def _select(self, row: int) -> None:
         self.stack.setCurrentIndex(row)
 
+    def closeEvent(self, event) -> None:
+        """Окно уходит только вместе со своими потоками."""
+        for widget in self._widgets.values():
+            if isinstance(widget, AudioBox):
+                widget.stop()
+        super().closeEvent(event)
+
     # --- сохранение ------------------------------------------------------
 
     def _collect(self) -> dict[str, object]:
@@ -485,6 +565,8 @@ class SettingsWindow(QDialog):
                 raw[name] = widget.get()
             elif isinstance(widget, Switch):
                 raw[name] = widget.value()
+            elif isinstance(widget, AudioBox):
+                raw[name] = widget.text()
             elif isinstance(widget, QComboBox):
                 raw[name] = widget.currentText()
             else:
@@ -510,11 +592,15 @@ class SettingsWindow(QDialog):
         self._tell(f"Сохранено. {self._apply_hotkey(config)}", ok=True)
 
     def _apply_hotkey(self, config: Config) -> str:
-        """Хоткей ставится системой и не везде автоматически — так и говорим."""
+        """Хоткей регистрируется системой и не везде автоматически.
+
+        Отказ регистрации — не беда: пока открыт трей, комбинации слушает сам
+        snapreel. Поэтому и говорим об этом спокойно, а не как об ошибке.
+        """
         try:
             return autostart.install(config.hotkey_mp4).message
         except autostart.HotkeySetupError as exc:
-            return f"Хоткей назначить не вышло: {exc}"
+            return str(exc)
 
     def _tell(self, text: str, ok: bool = False, bad: bool = False) -> None:
         _restyle(self.status, "ok" if ok else "error" if bad else "hint", text)
