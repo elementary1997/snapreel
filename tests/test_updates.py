@@ -53,7 +53,14 @@ def net(monkeypatch):
     return fake_urlopen
 
 
-def release_json(tag="v9.9.9", asset="snapreel-linux-x86_64", with_sums=True):
+def release_json(tag="v9.9.9", asset=None, with_sums=True):
+    """Ответ github с файлом для той системы, на которой идёт прогон.
+
+    Имя файла зашитое здесь означало бы совсем другую проверку: на Windows и
+    macOS такой релиз — это «в релизе нет файла для этой системы», и тест про
+    суточную отметку падал бы не там, где смотрит.
+    """
+    asset = asset or updates.asset_name()
     assets = [{"name": asset, "browser_download_url": f"https://d/{asset}", "size": 10}]
     if with_sums:
         assets.append({"name": "SHA256SUMS", "browser_download_url": "https://d/SHA256SUMS"})
