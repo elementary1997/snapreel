@@ -106,3 +106,29 @@ def test_a_windows_path_survives_a_round_trip_through_the_config():
 
     assert restored["output_dir"] == config.output_dir
     assert restored["filename_template"] == config.filename_template
+
+
+# --- перенос старых ключей ------------------------------------------------
+
+
+def test_an_old_config_keeps_putting_the_path_in_the_clipboard(tmp_path):
+    """До 0.6.0 выбор жил булевым `copy_path_as_text`; молча забыть его нельзя."""
+    path = tmp_path / "config.toml"
+    path.write_text("copy_path_as_text = true\n", encoding="utf-8")
+
+    assert config_module.load(path).clipboard == "path"
+
+
+def test_an_old_config_without_that_flag_gets_the_file(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text("copy_path_as_text = false\n", encoding="utf-8")
+
+    assert config_module.load(path).clipboard == "file"
+
+
+def test_the_new_key_wins_over_the_old_one(tmp_path):
+    """Если человек уже написал новый ключ, старый ему не указ."""
+    path = tmp_path / "config.toml"
+    path.write_text('copy_path_as_text = true\nclipboard = "file"\n', encoding="utf-8")
+
+    assert config_module.load(path).clipboard == "file"

@@ -224,6 +224,24 @@ class TrayApp:
         finally:
             self._busy = False
             self.refresh()
+            if self._stopping.is_set():
+                # пока мы упаковывали, человек выбрал «Выйти»: клип только
+                # что лёг в буфер, которым владеет этот процесс, — и уйдёт
+                # вместе с ним, если не передать содержимое дальше
+                self.hand_over_clipboard()
+
+    def hand_over_clipboard(self) -> None:
+        """Отдаёт буфер обмена тому, кто переживёт наш выход.
+
+        Владение селекцией в X11 живёт, пока жив процесс. Зовётся последним —
+        после упаковки: до неё в буфере лежит прошлый клип, а нужен этот.
+        """
+        from . import clipboard
+
+        try:
+            clipboard.hand_off(self.env)
+        except Exception as exc:  # выход не отменяется из-за буфера
+            print(f"snapreel: буфер обмена не передан — {exc}", file=sys.stderr)
 
     def _blame(self, exc: Exception) -> None:
         """Сбой записи не гасит иконку, но и молчать о нём нельзя.
@@ -446,15 +464,6 @@ class TrayApp:
         """
         self._stopping.set()
         self.unbind_hotkeys()
-        # буфером обмена на X11 владеет наш же процесс: уходя, отдаём
-        # содержимое тому, кто нас переживёт, — иначе человек, закрывший
-        # иконку сразу после записи, останется с пустым буфером
-        from . import clipboard
-
-        try:
-            clipboard.hand_off(self.env)
-        except Exception as exc:  # выход не отменяется из-за буфера
-            print(f"snapreel: буфер обмена не передан — {exc}", file=sys.stderr)
         recording, self._running = self._running, None
         if recording is not None:
             self._notify("snapreel", "заканчиваю запись — клип уйдёт в буфер обмена")
@@ -599,8 +608,9 @@ def run(config: Config, path: Path | None = None, env: Environment | None = None
         # упаковка идёт фоновым потоком, и выход не вправе её оборвать: там
         # клип превращается в файл и уходит в буфер обмена. Ждём её здесь,
         # чтобы уведомление успело выйти при живом трее; а если она дольше —
-        # процесс дождётся сам, поток не демонский
+        # процесс дождётся сам, поток не демонский, и буфер передаст она же
         app.join(timeout=PACKING_WAIT)
+        app.hand_over_clipboard()
     return 0
 
 

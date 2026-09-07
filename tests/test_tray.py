@@ -672,6 +672,35 @@ def test_a_refused_binding_reaches_the_person(tray_app, monkeypatch):
     assert tray_app.app.hotkey_problem == "комбинацию уже кто-то держит"
 
 
+def test_the_clipboard_is_handed_over_after_the_packing_not_before(tray_app, monkeypatch):
+    """Буфером владеет этот процесс, и до упаковки в нём лежит прошлый клип."""
+    order: list[str] = []
+    monkeypatch.setattr("snapreel.clipboard.hand_off", lambda env=None: order.append("передали"))
+
+    def pack():
+        order.append("упаковали")
+
+    tray_app.app._record_clip = lambda as_gif: pack
+    tray_app.app.quit()  # человек выбрал «Выйти», пока запись ещё идёт
+    tray_app.app._stopping.set()
+    tray_app.app.record()
+    tray_app.app.join()
+
+    assert order == ["упаковали", "передали"]
+
+
+def test_the_clipboard_stays_ours_while_the_tray_lives(tray_app, monkeypatch):
+    """Пока иконка на месте, буфер держим мы — только так в нём все форматы."""
+    handed: list = []
+    monkeypatch.setattr("snapreel.clipboard.hand_off", lambda env=None: handed.append("передали"))
+
+    tray_app.app._record_clip = lambda as_gif: lambda: None
+    tray_app.app.record()
+    tray_app.app.join()
+
+    assert handed == []
+
+
 def test_the_settings_window_hears_about_that_refusal(tray_app, monkeypatch):
     """Окно открывает трей, и он знает про привязку точнее любой проверки."""
     seen = {}
