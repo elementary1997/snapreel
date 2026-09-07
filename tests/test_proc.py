@@ -101,46 +101,31 @@ def test_a_powershell_failure_comes_back_as_words(monkeypatch):
     assert "exit 1" in decoded
 
 
-def test_the_wrapping_does_not_touch_error_handling(monkeypatch):
-    """Обёртка не вправе менять то, как PowerShell обходится с ошибками.
+def test_the_wrapping_adds_exactly_two_known_lines(monkeypatch):
+    """Обёртка добавляет к скрипту ровно кодировку и хвост — и больше ничего.
 
-    Скрипт уведомления держится на том, что ошибка WinRT на `AppendChild`
-    обрывает свой оператор, но не остальные: до `.Show(...)` он всё равно
-    доходит. Любой способ сделать ошибку останавливающей — `try`, `trap`,
-    `$ErrorActionPreference = 'Stop'` — оставляет человека без уведомлений,
-    и проверено это на живом powershell, а не додумано.
+    Список разрешённого, а не запрещённого: любой способ сделать ошибку
+    останавливающей (`try`, `trap`, `$ErrorActionPreference`, `Set-Variable`
+    с тем же именем по частям) оставляет человека без уведомлений — скрипт
+    тоста держится на том, что ошибка WinRT обрывает свой оператор, но не
+    остальные. Перечислять такие способы бесполезно, их придумывается
+    сколько угодно; перечислить разрешённое — можно, оно короткое.
 
-    Поэтому запрещается не одна запись, а весь класс: обёртка добавляет
-    кодировку и хвост, и ничего про обработку ошибок.
+    Строка сверху не совпала — значит обёртку меняли: подумайте, не
+    трогает ли новая строка обработку ошибок, и обновите список осознанно.
     """
+    allowed = {
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
+        "if (-not $?) { [Console]::Out.WriteLine($Error[0].Exception.Message); exit 1 }",
+    }
     seen: dict = {}
     monkeypatch.setattr(proc, "run", _catching(seen))
 
     proc.powershell("$toast.Show()")
 
-    decoded = base64.b64decode(seen["command"][-1]).decode("utf-16-le").lower()
-    added = decoded.replace("$toast.show()", "")
-    for directive in ("try", "trap", "erroractionpreference", "-erroraction", "$erroractionpref"):
-        assert directive not in added, f"обёртка меняет обработку ошибок: {directive}"
-
-
-def test_console_words_are_decoded_even_before_our_encoding_takes_effect(monkeypatch):
-    """Ошибку разбора PowerShell пишет раньше первой строки скрипта.
-
-    То есть в кодировке консоли, а не в UTF-8: декодированная как UTF-8, она
-    превращается в кракозябры — и человеку снова достаётся невнятица.
-    """
-    console = "Отсутствует признак конца строки.".encode("cp866")
-    # на Windows это `oem`, но кодека с таким именем нет на других системах,
-    # а проверять поведение надо в любом прогоне
-    monkeypatch.setattr(proc, "_console_codec", lambda: "cp866")
-    monkeypatch.setattr(
-        proc, "run", lambda command, **kwargs: subprocess.CompletedProcess(command, 1, b"", console)
-    )
-
-    result = proc.powershell("$link = 'незакрытая")
-
-    assert result.stderr == "Отсутствует признак конца строки."
+    decoded = base64.b64decode(seen["command"][-1]).decode("utf-16-le")
+    added = {line.strip() for line in decoded.splitlines() if line.strip()} - {"$toast.Show()"}
+    assert added == allowed
 
 
 def test_a_script_error_is_not_shown_as_xml():

@@ -97,7 +97,7 @@ def test_an_apostrophe_in_the_path_does_not_break_the_script(tmp_path):
     невнятицей — до кода, который умеет объяснять, дело не доходит.
     """
     script = autostart.windows_shortcut_script(
-        pathlib.Path(r"D:\Ivan's tools\Snapreel.lnk"), argv=["D:\Ivan's tools\snapreel.exe"]
+        pathlib.Path(r"D:\Ivan's tools\Snapreel.lnk"), argv=[r"D:\Ivan's tools\snapreel.exe"]
     )
 
     assert "'D:\\Ivan''s tools\\Snapreel.lnk'" in script

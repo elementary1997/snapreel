@@ -23,7 +23,7 @@ def send(title: str, message: str, env: Environment | None = None) -> None:
 
 
 def _macos(title: str, message: str) -> None:
-    script = f'display notification "{_escape(message)}" with title "{_escape(title)}"'
+    script = f'display notification "{_applescript(message)}" with title "{_applescript(title)}"'
     proc.run(["osascript", "-e", script], capture_output=True, timeout=10)
 
 
@@ -42,9 +42,9 @@ def _windows(title: str, message: str) -> None:
         " ContentType = WindowsRuntime] > $null;"
         "$t = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent(1);"
         f"$t.GetElementsByTagName('text')[0]"
-        f".AppendChild($t.CreateTextNode('{_escape(title)}')) > $null;"
+        f".AppendChild($t.CreateTextNode({proc.ps_string(title)})) > $null;"
         f"$t.GetElementsByTagName('text')[1]"
-        f".AppendChild($t.CreateTextNode('{_escape(message)}')) > $null;"
+        f".AppendChild($t.CreateTextNode({proc.ps_string(message)})) > $null;"
         "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('snapreel')"
         ".Show([Windows.UI.Notifications.ToastNotification]::new($t))"
     )
@@ -53,5 +53,12 @@ def _windows(title: str, message: str) -> None:
     proc.powershell(script, timeout=15)
 
 
-def _escape(text: str) -> str:
-    return text.replace("\\", "\\\\").replace('"', '\\"').replace("'", "''")
+def _applescript(text: str) -> str:
+    """Экранирование для AppleScript: там строка в двойных кавычках.
+
+    Windows этим пользоваться нельзя, хотя раньше так и было: в скрипте
+    PowerShell строка одинарная, обратный слеш в ней ничего не значит — и
+    удвоенный он таким и показывался. Человек видел «C:\\Users\\Иван\\…»
+    вместо своего пути.
+    """
+    return text.replace("\\", "\\\\").replace('"', '\\"')

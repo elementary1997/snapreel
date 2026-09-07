@@ -338,26 +338,15 @@ def windows_shortcut_script(
     arguments = quote(argv[1:])
     script = (
         "$shell = New-Object -ComObject WScript.Shell; "
-        f"$link = $shell.CreateShortcut({ps_string(str(path))}); "
-        f"$link.TargetPath = {ps_string(argv[0])}; "
-        f"$link.Arguments = {ps_string(arguments)}; "
-        f"$link.WorkingDirectory = {ps_string(str(Path.home()))}; "
-        f"$link.Description = {ps_string(description)}; "
+        f"$link = $shell.CreateShortcut({proc.ps_string(str(path))}); "
+        f"$link.TargetPath = {proc.ps_string(argv[0])}; "
+        f"$link.Arguments = {proc.ps_string(arguments)}; "
+        f"$link.WorkingDirectory = {proc.ps_string(str(Path.home()))}; "
+        f"$link.Description = {proc.ps_string(description)}; "
     )
     if hotkey:
-        script += f"$link.Hotkey = {ps_string(to_windows(hotkey))}; "
+        script += f"$link.Hotkey = {proc.ps_string(to_windows(hotkey))}; "
     return script + "$link.Save()"
-
-
-def ps_string(value: str) -> str:
-    """Строка в кавычках, которую PowerShell прочитает целиком.
-
-    Каталог человек выбирает сам, и апостроф в нём — обычное дело
-    («D:\\Ivan's tools»). Без удвоения он закрывает строку раньше времени, и
-    скрипт не выполняется вовсе: PowerShell спотыкается на разборе, а
-    человек видит невнятицу вместо ярлыка.
-    """
-    return "'" + value.replace("'", "''") + "'"
 
 
 def _powershell(script: str) -> None:
