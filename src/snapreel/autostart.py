@@ -362,16 +362,21 @@ def windows_shortcut_script(
     # COM-объект молча выбрасывает то, что не представимо в кодировке
     # системы: путь с чужими буквами превращается в пустую строку, `Save()`
     # проходит, и получается ярлык в никуда — а snapreel рапортует об
-    # успехе. Поэтому перечитываем записанное и сверяем
+    # успехе. Поэтому перечитываем записанное и сверяем.
+    #
+    # Причину при этом не угадываем: разойтись может и от непредставимого
+    # имени папки профиля, и от пути длиннее 260 знаков. Называем факты —
+    # что просили и что получилось, — и обе частые причины разом
     return script + (
         "$link.Save(); "
         f"$saved = $shell.CreateShortcut({proc.ps_string(str(path))}); "
         f"if ($saved.TargetPath -ne {proc.ps_string(argv[0])}) {{ "
-        "[Console]::Out.WriteLine("
-        "'Windows не приняла путь ' + "
-        f"{proc.ps_string(argv[0])}"
-        " + ': в нём есть буквы, которых нет в кодировке системы. "
-        "Поставьте snapreel в папку с латинским именем.'); exit 1 }"
+        "[Console]::Out.WriteLine('Windows записала ярлык не так, как просили: "
+        f"вместо ' + {proc.ps_string(argv[0])} + ' в нём ' + "
+        "$(if ($saved.TargetPath) { $saved.TargetPath } else { 'пусто' }) + "
+        "'. Так бывает, когда в пути есть буквы, которых нет в кодировке системы — "
+        "в самом пути или в имени папки пользователя, — либо когда путь длиннее "
+        "260 знаков.'); exit 1 }"
     )
 
 
@@ -482,11 +487,18 @@ def install_autostart(env: Environment | None = None) -> Outcome:
         if env.platform is Platform.WINDOWS:
             path = windows_startup_path()
             path.parent.mkdir(parents=True, exist_ok=True)
-            _powershell(
-                windows_shortcut_script(
-                    path, argv=tray_argv(), description="Snapreel — иконка в трее"
+            try:
+                _powershell(
+                    windows_shortcut_script(
+                        path, argv=tray_argv(), description="Snapreel — иконка в трее"
+                    )
                 )
-            )
+            except HotkeySetupError:
+                # ярлык мог остаться лежать с пустой целью: он никуда не
+                # ведёт, а система и меню трея считали бы автозапуск
+                # включённым — хуже, чем его отсутствие
+                _drop(path)
+                raise
             # прежнее имя убираем, иначе трей поднимался бы дважды
             _drop_legacy_startup()
             return Outcome(True, f"трей будет стартовать при входе: {path}")
@@ -524,9 +536,13 @@ def remove_autostart(env: Environment | None = None) -> Outcome:
 
 def _drop_legacy_startup() -> None:
     """Убирает ярлык с прежним именем: два ярлыка подняли бы два трея."""
-    legacy = windows_startup_path().parent / LEGACY_STARTUP_NAME
+    _drop(windows_startup_path().parent / LEGACY_STARTUP_NAME)
+
+
+def _drop(path: Path) -> None:
+    """Убирает файл, если он есть; неудача уборки — не повод падать."""
     try:
-        legacy.unlink(missing_ok=True)
+        path.unlink(missing_ok=True)
     except OSError:
         pass  # не убрался — хуже прежнего не стало
 
