@@ -367,16 +367,29 @@ def windows_shortcut_script(
     # Причину при этом не угадываем: разойтись может и от непредставимого
     # имени папки профиля, и от пути длиннее 260 знаков. Называем факты —
     # что просили и что получилось, — и обе частые причины разом
+    # Убирает ли ярлык за собой, решает тоже скрипт: только он видит, что в
+    # ярлыке осталось. Пустая цель — файл в никуда, его убираем; но если
+    # Windows сохранила прежнюю рабочую цель, трогать нельзя — снеся такой
+    # ярлык, мы отняли бы у человека уже работавший автозапуск
+    why = (
+        "Так бывает, когда в пути есть буквы, которых нет в кодировке системы — "
+        "в самом пути или в имени папки пользователя, — либо когда путь длиннее "
+        "260 знаков."
+    )
     return script + (
         "$link.Save(); "
         f"$saved = $shell.CreateShortcut({proc.ps_string(str(path))}); "
         f"if ($saved.TargetPath -ne {proc.ps_string(argv[0])}) {{ "
-        "[Console]::Out.WriteLine('Windows записала ярлык не так, как просили: "
-        f"вместо ' + {proc.ps_string(argv[0])} + ' в нём ' + "
-        "$(if ($saved.TargetPath) { $saved.TargetPath } else { 'пусто' }) + "
-        "'. Так бывает, когда в пути есть буквы, которых нет в кодировке системы — "
-        "в самом пути или в имени папки пользователя, — либо когда путь длиннее "
-        "260 знаков.'); exit 1 }"
+        f"$asked = {proc.ps_string(argv[0])}; "
+        "if ($saved.TargetPath) { [Console]::Out.WriteLine("
+        "'Windows записала ярлык не так, как просили: вместо ' + $asked + "
+        "' в нём осталось ' + $saved.TargetPath + '. Прежний ярлык не тронут. ' + "
+        f"{proc.ps_string(why)}) }} else {{ "
+        f"Remove-Item -LiteralPath {proc.ps_string(str(path))} -Force; "
+        "[Console]::Out.WriteLine('Windows записала ярлык не так, как просили: вместо ' + "
+        "$asked + ' в нём пусто, поэтому ярлык убран. ' + "
+        f"{proc.ps_string(why)}) }} "
+        "exit 1 }"
     )
 
 
@@ -487,18 +500,14 @@ def install_autostart(env: Environment | None = None) -> Outcome:
         if env.platform is Platform.WINDOWS:
             path = windows_startup_path()
             path.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                _powershell(
-                    windows_shortcut_script(
-                        path, argv=tray_argv(), description="Snapreel — иконка в трее"
-                    )
+            # уборку неудавшегося ярлыка делает сам скрипт: только он видит,
+            # осталась ли в ярлыке прежняя рабочая цель. Снести такой ярлык
+            # отсюда значило бы отнять у человека работавший автозапуск
+            _powershell(
+                windows_shortcut_script(
+                    path, argv=tray_argv(), description="Snapreel — иконка в трее"
                 )
-            except HotkeySetupError:
-                # ярлык мог остаться лежать с пустой целью: он никуда не
-                # ведёт, а система и меню трея считали бы автозапуск
-                # включённым — хуже, чем его отсутствие
-                _drop(path)
-                raise
+            )
             # прежнее имя убираем, иначе трей поднимался бы дважды
             _drop_legacy_startup()
             return Outcome(True, f"трей будет стартовать при входе: {path}")

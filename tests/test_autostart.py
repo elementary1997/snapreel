@@ -254,22 +254,18 @@ def test_the_shortcut_is_read_back_after_saving():
     assert "260 знаков" in script
 
 
-def test_a_failed_shortcut_does_not_stay_in_startup(monkeypatch, tmp_path):
-    """Ярлык с пустой целью хуже отсутствия: меню считало бы автозапуск включённым."""
-    startup = tmp_path / "Startup"
-    startup.mkdir()
-    path = startup / autostart.STARTUP_NAME
-    monkeypatch.setattr(autostart, "windows_startup_path", lambda: path)
+def test_an_empty_shortcut_is_removed_but_a_working_one_is_kept():
+    """Убирать ярлык вправе только тот, кто видит, что в нём осталось.
 
-    def refuse(script):
-        path.write_text("ярлык в никуда", encoding="utf-8")  # так делает Windows
-        raise HotkeySetupError("Windows записала ярлык не так, как просили")
+    Windows на неудачной перезаписи иногда сохраняет прежнюю, рабочую цель.
+    Снести такой ярлык значило бы отнять у человека уже работавший
+    автозапуск — поэтому решение принимает сам скрипт, а не питон снаружи.
+    """
+    script = autostart.windows_shortcut_script(
+        pathlib.Path(r"C:\Startup\Snapreel Tray.lnk"), argv=[r"C:\Program Files\snapreel.exe"]
+    )
 
-    monkeypatch.setattr(autostart, "_powershell", refuse)
-
-    outcome = autostart.install_autostart(WINDOWS)
-
-    assert not outcome.ok
-    assert "как просили" in outcome.message
-    assert not path.exists()
-    assert autostart.autostart_enabled(WINDOWS) is False
+    assert "if ($saved.TargetPath) {" in script  # осталась прежняя цель — не трогаем
+    assert "Прежний ярлык не тронут" in script
+    assert "Remove-Item -LiteralPath" in script  # пусто — убираем
+    assert "ярлык убран" in script
