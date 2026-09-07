@@ -17,6 +17,7 @@ WAYLAND = Environment(platform=Platform.LINUX_WAYLAND, is_wsl=False)
 WSL = Environment(platform=Platform.LINUX_WAYLAND, is_wsl=True)
 X11 = Environment(platform=Platform.LINUX_X11, is_wsl=False)
 WINDOWS = Environment(platform=Platform.WINDOWS, is_wsl=False)
+MACOS = Environment(platform=Platform.MACOS, is_wsl=False)
 
 
 @pytest.fixture
@@ -158,21 +159,36 @@ def test_the_probe_repeats_a_reason_it_already_knows():
     assert "Wayland" in hotkeys.probe(Config(), WAYLAND)
 
 
-def test_the_probe_never_starts_someone_elses_listener(monkeypatch, x_server):
+def test_the_probe_leaves_macos_alone(monkeypatch, x_server):
     """На macOS pynput без разрешения «Универсальный доступ» валит процесс.
 
-    `doctor` обязан работать в любом окружении, поэтому пробуем только свой
-    перехват X11 — там отказ и возможен, и безобиден.
+    `doctor` обязан работать в любом окружении, поэтому там мы не пробуем
+    вовсе — и говорим об этом, а не выдаём перечень известных причин за
+    проверку.
     """
-    x_server(record=True)  # RECORD на месте, значит наш перехват не нужен
+    x_server(record=True)
 
     def forbidden(config, handler, env=None):
-        raise AssertionError("проба не смеет поднимать чужой слушатель")
+        raise AssertionError("на macOS проба убила бы процесс")
 
     monkeypatch.setattr(hotkeys, "listen", forbidden)
 
-    assert hotkeys.probe(Config(), WINDOWS) is None
-    assert hotkeys.probe(Config(), X11) is None
+    assert hotkeys.can_probe(MACOS) is False
+    assert hotkeys.probe(Config(), MACOS) is None
+
+
+def test_the_probe_really_tries_everywhere_else(monkeypatch, x_server):
+    """Там, где слушатель безобиден, отказ виден только по итогу попытки."""
+    x_server(record=True)  # RECORD на месте: слушать будет pynput
+
+    def refuse(config, handler, env=None):
+        raise hotkeys.HotkeyError("pynput не поднялся: failed to acquire X connection")
+
+    monkeypatch.setattr(hotkeys, "listen", refuse)
+
+    assert hotkeys.can_probe(X11) is True
+    assert "failed to acquire X connection" in hotkeys.probe(Config(), X11)
+    assert "failed to acquire X connection" in hotkeys.probe(Config(), WINDOWS)
 
 
 def test_a_machine_without_python_xlib_gets_our_own_error(monkeypatch):
@@ -221,6 +237,43 @@ def test_a_broken_pynput_is_not_called_a_missing_one(monkeypatch, x_server):
 
     assert "failed to acquire X connection" in str(failure.value)
     assert "pip install" not in str(failure.value)
+
+
+def test_the_keys_are_let_go_before_the_connection_closes():
+    """Иначе следующий захват натыкается на собственный прежний.
+
+    Разница видна только под нагрузкой, поэтому закрепляем не время, а
+    порядок: сначала отпустить и дождаться сервера, потом закрывать.
+    """
+    pytest.importorskip("Xlib")
+    order: list[str] = []
+
+    class Root:
+        def ungrab_key(self, code, mask):
+            order.append(f"отпустили {code}")
+
+    class Screen:
+        root = Root()
+
+    class FakeDisplay:
+        def screen(self):
+            return Screen()
+
+        def sync(self):
+            order.append("дождались сервера")
+
+        def close(self):
+            order.append("закрыли")
+
+    listener = hotkeys_x11.Listener({})
+    listener._display = FakeDisplay()
+    listener._grabs = {(27, 13): lambda: None}
+
+    listener._release()
+
+    assert order[0].startswith("отпустили")
+    assert order[-2:] == ["дождались сервера", "закрыли"]
+    assert listener._display is None
 
 
 def test_the_locks_do_not_break_a_combination():

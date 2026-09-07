@@ -64,20 +64,14 @@ def probe(config: Config, env: Environment | None = None) -> str | None:
     занять рабочий стол, а клавиши в ней может не оказаться на раскладке.
     Такой отказ человек обязан увидеть, а не догадаться о нём по тишине.
 
-    По-настоящему пробуем только свой перехват X11: там отказ и возможен, и
-    безобиден. Чужой слушатель ради проверки не поднимаем — pynput на macOS
-    без разрешения «Универсальный доступ» валит процесс целиком.
+    Не пробуем ровно там, где проба опаснее незнания, — `can_probe`.
     """
     env = env or detect()
     refusal = why_silent(env)
     if refusal is not None:
         return refusal
-    if not _needs_grab(env):
-        # запускать чужой слушатель ради проверки нельзя: на macOS pynput без
-        # разрешения «Универсальный доступ» не отказывает, а убивает процесс —
-        # `doctor` обязан работать в любом окружении. Да и сказать он там
-        # ничего нового не может: перехват через RECORD ни с кем не спорит
-        return None
+    if not can_probe(env):
+        return None  # не пробовали — и `doctor` скажет об этом прямо
     try:
         listener = listen(config, lambda as_gif: None, env)
     except HotkeyError as exc:
@@ -87,6 +81,19 @@ def probe(config: Config, env: Environment | None = None) -> str | None:
     except Exception:  # отпустить не вышло — на ответ это не влияет
         pass
     return None
+
+
+def can_probe(env: Environment | None = None) -> bool:
+    """Можно ли проверить привязку по-настоящему, не рискуя процессом.
+
+    Нельзя на macOS: слушатель pynput без разрешения «Универсальный доступ»
+    не отказывает, а вызывает abort в своём потоке — перехватить нечем, и
+    `doctor`, который обязан работать в любом окружении, умер бы вместо
+    диагностики. Везде остальном проба безобидна и полезна: она видит и
+    занятую соседом комбинацию, и не подключившийся к экрану pynput.
+    """
+    env = env or detect()
+    return env.platform is not Platform.MACOS
 
 
 def mechanism(env: Environment | None = None) -> str:
