@@ -29,7 +29,14 @@ GNOME_PATH = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/s
 # у людей plist в системе, а убрать его умеет только тот, кто знает имя.
 LAUNCH_AGENT = "com.snapreel.daemon"
 SHORTCUT_NAME = "Snapreel.lnk"
-STARTUP_NAME = "Snapreel (трей).lnk"
+# Имена ярлыков — только латиницей. COM-объект WScript.Shell, которым они
+# создаются, переводит путь в кодировку системы: на английской Windows
+# кириллица становится «?», а такое имя файла Windows не принимает, и
+# автозапуск не прописывается вовсе. Проверено на живом powershell: на
+# русской системе так же падает имя с иероглифами.
+STARTUP_NAME = "Snapreel Tray.lnk"
+# То же имя до 0.6.3: у кого автозапуск прописан им, тот вправе его снять.
+LEGACY_STARTUP_NAME = "Snapreel (трей).lnk"
 DESKTOP_ENTRY_NAME = "snapreel.desktop"
 
 
@@ -317,6 +324,12 @@ def windows_shortcut_path() -> Path:
     return base / "Microsoft" / "Windows" / "Start Menu" / "Programs" / SHORTCUT_NAME
 
 
+def windows_startup_paths() -> list[Path]:
+    """Все места, где мог оказаться наш ярлык автозапуска — нынешнее и прежние."""
+    folder = windows_startup_path().parent
+    return [windows_startup_path(), folder / LEGACY_STARTUP_NAME]
+
+
 def windows_startup_path() -> Path:
     """Автозагрузка Windows: всё, что лежит в этой папке, стартует при входе."""
     base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
@@ -441,7 +454,7 @@ def autostart_enabled(env: Environment | None = None) -> bool:
     env = env or detect()
     try:
         if env.platform is Platform.WINDOWS:
-            return windows_startup_path().is_file()
+            return any(path.is_file() for path in windows_startup_paths())
         if env.platform is Platform.MACOS:
             return launch_agent_path().is_file()
         return desktop_entry_path().is_file()
@@ -461,6 +474,8 @@ def install_autostart(env: Environment | None = None) -> Outcome:
                     path, argv=tray_argv(), description="Snapreel — иконка в трее"
                 )
             )
+            # прежнее имя убираем, иначе трей поднимался бы дважды
+            _drop_legacy_startup()
             return Outcome(True, f"трей будет стартовать при входе: {path}")
         if env.platform is Platform.MACOS:
             return install_launch_agent()
@@ -478,13 +493,29 @@ def remove_autostart(env: Environment | None = None) -> Outcome:
     try:
         if env.platform is Platform.MACOS:
             return remove_launch_agent()
-        path = windows_startup_path() if env.platform is Platform.WINDOWS else desktop_entry_path()
+        if env.platform is Platform.WINDOWS:
+            removed = [path for path in windows_startup_paths() if path.is_file()]
+            if not removed:
+                return Outcome(True, "автозапуск snapreel не найден")
+            for path in removed:
+                path.unlink()
+            return Outcome(True, f"автозапуск убран: {removed[0]}")
+        path = desktop_entry_path()
         if not path.is_file():
             return Outcome(True, "автозапуск snapreel не найден")
         path.unlink()
         return Outcome(True, f"автозапуск убран: {path}")
     except (OSError, subprocess.SubprocessError) as exc:
         return Outcome(False, f"не убрать автозапуск: {exc}")
+
+
+def _drop_legacy_startup() -> None:
+    """Убирает ярлык с прежним именем: два ярлыка подняли бы два трея."""
+    legacy = windows_startup_path().parent / LEGACY_STARTUP_NAME
+    try:
+        legacy.unlink(missing_ok=True)
+    except OSError:
+        pass  # не убрался — хуже прежнего не стало
 
 
 def _macos_hint(hotkey: str) -> Outcome:

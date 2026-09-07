@@ -6,6 +6,8 @@ from snapreel import autostart
 from snapreel.autostart import HotkeySetupError
 from snapreel.platform_info import Environment, Platform
 
+WINDOWS = Environment(platform=Platform.WINDOWS, is_wsl=False)
+
 
 @pytest.mark.parametrize(
     "spec,expected",
@@ -185,3 +187,47 @@ def test_the_startup_shortcut_runs_the_tray_without_a_hotkey(tmp_path):
 def test_the_windows_startup_path_lands_in_the_startup_folder(monkeypatch, tmp_path):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     assert autostart.windows_startup_path().parent.name == "Startup"
+
+
+# --- имена ярлыков Windows -------------------------------------------------
+
+
+def test_shortcut_names_are_ascii_only():
+    """COM-объект ярлыка переводит путь в кодировку системы.
+
+    На английской Windows кириллица в имени становится «?», а такое имя
+    файла система не принимает — автозапуск не прописывается вовсе.
+    Проверено на живом powershell: на русской системе так же падает имя с
+    иероглифами, то есть дело в представимости, а не в самой кириллице.
+    """
+    assert autostart.SHORTCUT_NAME.isascii()
+    assert autostart.STARTUP_NAME.isascii()
+
+
+def test_the_old_shortcut_name_is_still_known(monkeypatch, tmp_path):
+    """У кого автозапуск прописан прежним именем, тот вправе его снять."""
+    startup = tmp_path / "Startup"
+    startup.mkdir()
+    monkeypatch.setattr(autostart, "windows_startup_path", lambda: startup / autostart.STARTUP_NAME)
+    legacy = startup / autostart.LEGACY_STARTUP_NAME
+    legacy.write_text("прежний ярлык", encoding="utf-8")
+
+    assert autostart.autostart_enabled(WINDOWS) is True
+
+    outcome = autostart.remove_autostart(WINDOWS)
+
+    assert outcome.ok
+    assert not legacy.exists()
+
+
+def test_installing_drops_the_old_shortcut(monkeypatch, tmp_path):
+    """Два ярлыка в автозагрузке подняли бы два трея."""
+    startup = tmp_path / "Startup"
+    startup.mkdir()
+    monkeypatch.setattr(autostart, "windows_startup_path", lambda: startup / autostart.STARTUP_NAME)
+    monkeypatch.setattr(autostart, "_powershell", lambda script: None)
+    legacy = startup / autostart.LEGACY_STARTUP_NAME
+    legacy.write_text("прежний ярлык", encoding="utf-8")
+
+    assert autostart.install_autostart(WINDOWS).ok
+    assert not legacy.exists()
