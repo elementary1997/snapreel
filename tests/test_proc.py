@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import re
 import subprocess
 from pathlib import Path
-
-import pytest
 
 import snapreel
 from snapreel import proc
@@ -57,41 +56,52 @@ def test_the_package_starts_processes_only_through_proc():
     assert offenders == []
 
 
-def test_a_powershell_script_travels_as_a_utf8_file(monkeypatch):
+def test_a_powershell_script_keeps_its_cyrillic(monkeypatch):
     """Командной строкой кириллица до PowerShell не доезжает.
 
     На английской Windows она превращается в «?», а «?» в имени файла
-    система не разрешает — автозапуск просто не прописывался. Нашлось
+    система не разрешает — автозапуск не прописывался вовсе. Нашлось
     приёмкой на раннере: `Unable to save shortcut ... (????).lnk`.
     """
     seen: dict = {}
-
-    def fake_run(command, **kwargs):
-        seen["command"] = list(command)
-        seen["script"] = Path(command[-1]).read_bytes()
-        return subprocess.CompletedProcess(command, 0, "", "")
-
-    monkeypatch.setattr(proc, "run", fake_run)
+    monkeypatch.setattr(proc, "run", lambda command, **kwargs: seen.update(command=list(command)))
 
     proc.powershell("$link.Description = 'Snapreel — запись в буфер'")
 
-    assert seen["command"][-2] == "-File"  # файлом, а не строкой
-    # метка UTF-8 в начале файла: по ней PowerShell и узнаёт кодировку
-    assert seen["script"].startswith(b"\xef\xbb\xbf")
-    assert "запись в буфер" in seen["script"].decode("utf-8-sig")
+    command = seen["command"]
+    assert "-EncodedCommand" in command
+    assert command[-1].isascii(), "по командной строке обязан ехать только ASCII"
+    decoded = base64.b64decode(command[-1]).decode("utf-16-le")
+    assert decoded == "$link.Description = 'Snapreel — запись в буфер'"
 
 
-def test_the_script_file_does_not_stay_behind(monkeypatch):
-    """Временный файл убирается — и когда всё прошло, и когда сорвалось."""
-    left: list[str] = []
+def test_a_powershell_script_does_not_go_as_a_file(monkeypatch):
+    """У `-File` другой код возврата: ошибка внутри скрипта оставляет ноль.
 
-    def fake_run(command, **kwargs):
-        left.append(command[-1])
-        raise OSError("powershell не запустился")
+    Тогда сорвавшаяся запись ярлыка выглядела бы успехом — а это
+    единственное, по чему мы отличаем прописанный автозапуск от
+    непрописанного. Плюс запуск файла упирается в политику выполнения
+    скриптов, которую групповая политика может запретить совсем.
+    """
+    seen: dict = {}
+    monkeypatch.setattr(proc, "run", lambda command, **kwargs: seen.update(command=list(command)))
 
-    monkeypatch.setattr(proc, "run", fake_run)
+    proc.powershell("echo привет")
 
-    with pytest.raises(OSError):
-        proc.powershell("echo привет")
+    assert "-File" not in seen["command"]
+    assert "-ExecutionPolicy" not in seen["command"]
 
-    assert left and not Path(left[0]).exists()
+
+def test_the_package_calls_powershell_only_through_proc():
+    """Забытый `-Command` вернул бы «?» вместо русских букв у человека."""
+    root = Path(snapreel.__file__).parent
+    direct = re.compile(r'"powershell"')
+    offenders = [
+        f"{path.relative_to(root)}:{number}"
+        for path in sorted(root.rglob("*.py"))
+        if path.name != "proc.py"
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if direct.search(line)
+    ]
+
+    assert offenders == []

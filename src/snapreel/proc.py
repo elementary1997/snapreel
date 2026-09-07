@@ -14,9 +14,8 @@
 
 from __future__ import annotations
 
-import os
+import base64
 import subprocess
-import tempfile
 from collections.abc import Sequence
 from typing import Any
 
@@ -49,43 +48,30 @@ def _merged(kwargs: dict[str, Any]) -> dict[str, Any]:
 
 
 def powershell(script: str, timeout: float = 60) -> subprocess.CompletedProcess:
-    """Выполняет скрипт PowerShell, передавая его файлом, а не строкой.
+    """Выполняет скрипт PowerShell, передавая его в кодировке, а не как текст.
 
-    Через `-Command` скрипт уезжает командной строкой, а её PowerShell читает
-    в кодировке ANSI системы: на английской Windows кириллица превращается в
-    «?». Это не косметика — в имени ярлыка автозапуска есть русское слово, а
-    «?» Windows в именах файлов не разрешает, и автозапуск просто не
-    прописывался: `Unable to save shortcut ... (????).lnk`. Нашлось приёмкой
-    на раннере, где система английская; на русской машине всё работало.
+    Обычной командной строкой (`-Command`) скрипт до PowerShell не доезжает:
+    её он читает в кодировке ANSI системы, и на английской Windows кириллица
+    превращается в «?». Это не косметика — в имени ярлыка автозапуска есть
+    русское слово, а «?» Windows в именах файлов не разрешает, и автозапуск
+    не прописывался вовсе: `Unable to save shortcut ... (????).lnk`. Нашлось
+    приёмкой на раннере с английской системой; на русской всё работало.
 
-    Файл пишется с меткой UTF-8 (BOM) — по ней PowerShell 5.1 узнаёт
-    кодировку без всяких настроек, а `-ExecutionPolicy Bypass` нужен затем,
-    что политика по умолчанию неподписанные файлы запускать не даёт.
+    `-EncodedCommand` берёт тот же скрипт в base64 от UTF-16LE: по командной
+    строке едет один ASCII, а PowerShell разбирает его обратно сам. Файлом
+    отдавать нельзя, хоть это и напрашивается: у `-File` другой код возврата
+    — при ошибке внутри скрипта он остаётся нулевым, и сорвавшаяся запись
+    ярлыка выглядела бы успехом; плюс запуск файла упирается в политику
+    выполнения скриптов, которую групповая политика может запретить совсем.
+
+    Ограничение — длина командной строки (около 32 тысяч знаков): скрипты
+    здесь на порядки короче, но бесконечно длинный так не передать.
     """
-    handle = tempfile.NamedTemporaryFile(
-        "w", suffix=".ps1", encoding="utf-8-sig", delete=False, newline="\r\n"
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    return run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+        capture_output=True,
+        text=True,
+        errors="replace",
+        timeout=timeout,
     )
-    try:
-        handle.write(script)
-        handle.close()
-        return run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                handle.name,
-            ],
-            capture_output=True,
-            text=True,
-            errors="replace",
-            timeout=timeout,
-        )
-    finally:
-        handle.close()
-        try:
-            os.unlink(handle.name)
-        except OSError:
-            pass  # файл во временном каталоге — уберёт система
