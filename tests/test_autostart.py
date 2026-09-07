@@ -231,3 +231,21 @@ def test_installing_drops_the_old_shortcut(monkeypatch, tmp_path):
 
     assert autostart.install_autostart(WINDOWS).ok
     assert not legacy.exists()
+
+
+def test_the_shortcut_is_read_back_after_saving():
+    """COM-объект молча выбрасывает непредставимый путь, а `Save()` проходит.
+
+    Получается ярлык в никуда, и snapreel рапортует об успехе: человек
+    уверен, что трей поднимется при входе, а тот не поднимается. Поэтому
+    записанное перечитывается и сверяется.
+    """
+    script = autostart.windows_shortcut_script(
+        pathlib.Path(r"C:\Startup\Snapreel Tray.lnk"), argv=[r"C:\Program Files\snapreel.exe"]
+    )
+
+    assert "$saved = $shell.CreateShortcut" in script
+    assert "$saved.TargetPath -ne" in script
+    assert "exit 1" in script
+    # человеку говорят, что делать, а не только что не вышло
+    assert "латинским именем" in script

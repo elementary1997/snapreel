@@ -359,11 +359,24 @@ def windows_shortcut_script(
     )
     if hotkey:
         script += f"$link.Hotkey = {proc.ps_string(to_windows(hotkey))}; "
-    return script + "$link.Save()"
+    # COM-объект молча выбрасывает то, что не представимо в кодировке
+    # системы: путь с чужими буквами превращается в пустую строку, `Save()`
+    # проходит, и получается ярлык в никуда — а snapreel рапортует об
+    # успехе. Поэтому перечитываем записанное и сверяем
+    return script + (
+        "$link.Save(); "
+        f"$saved = $shell.CreateShortcut({proc.ps_string(str(path))}); "
+        f"if ($saved.TargetPath -ne {proc.ps_string(argv[0])}) {{ "
+        "[Console]::Out.WriteLine("
+        "'Windows не приняла путь ' + "
+        f"{proc.ps_string(argv[0])}"
+        " + ': в нём есть буквы, которых нет в кодировке системы. "
+        "Поставьте snapreel в папку с латинским именем.'); exit 1 }"
+    )
 
 
 def _powershell(script: str) -> None:
-    """Скрипт уходит кодированным: в именах ярлыков есть кириллица (см. `proc`).
+    """Скрипт уходит кодированным: в нём есть русский текст (см. `proc`).
 
     Причину отказа ищем и на стандартном выводе: обёртка в `proc` печатает
     её туда сама, потому что поток ошибок PowerShell в этом режиме отдаёт
