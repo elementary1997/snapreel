@@ -10,6 +10,7 @@ import sys
 from dataclasses import dataclass
 from enum import StrEnum
 
+from . import proc
 from .region import Region
 
 
@@ -84,7 +85,7 @@ def _windows_dark() -> bool | None:
 
 
 def _macos_dark() -> bool | None:
-    result = subprocess.run(
+    result = proc.run(
         ["defaults", "read", "-g", "AppleInterfaceStyle"],
         capture_output=True,
         text=True,
@@ -99,7 +100,7 @@ def _linux_dark() -> bool | None:
     if not shutil.which("gsettings"):
         return None
     for key in ("color-scheme", "gtk-theme"):
-        result = subprocess.run(
+        result = proc.run(
             ["gsettings", "get", "org.gnome.desktop.interface", key],
             capture_output=True,
             text=True,
@@ -225,7 +226,7 @@ def _virtual_desktop_xrandr() -> Region | None:
     if not shutil.which("xrandr"):
         return None
     try:
-        out = subprocess.run(
+        out = proc.run(
             ["xrandr", "--query"],
             capture_output=True,
             text=True,

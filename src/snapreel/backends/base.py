@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .. import proc
 from ..config import Config
 from ..region import Region
 
@@ -114,23 +115,15 @@ class CaptureBackend:
         command = self.build_command(region, output, duration)
         output.parent.mkdir(parents=True, exist_ok=True)
         try:
-            process = subprocess.Popen(
+            process = proc.popen(
                 command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
-                **_no_window(),
             )
         except OSError as exc:
             raise CaptureError(f"не запустить {command[0]}: {exc}") from exc
         return Recording(process=process, output=output, graceful_stop=self.graceful_stop)
-
-
-def _no_window() -> dict:
-    """На Windows не даём консольному ffmpeg мигать окном поверх записи."""
-    if hasattr(subprocess, "CREATE_NO_WINDOW"):
-        return {"creationflags": subprocess.CREATE_NO_WINDOW}
-    return {}
 
 
 def require_binary(name: str, hint: str = "") -> list[str]:

@@ -17,6 +17,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import proc
 from .autostart import Outcome
 from .platform_info import Environment, Platform, detect
 
@@ -97,7 +98,7 @@ def install(
     if with_autostart:
         # автозапуск прописывает уже установленная копия: путь к себе она
         # знает сама, а нам пришлось бы его подставлять
-        result = subprocess.run(
+        result = proc.run(
             [str(current.target), "autostart"],
             capture_output=True,
             text=True,
@@ -148,7 +149,7 @@ def _remove_after_exit(target: Path, env: Environment) -> None:
     else:
         command = ["sh", "-c", f'sleep 1; rm -f "{target}"']
     try:
-        subprocess.Popen(
+        proc.popen(
             command,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -170,7 +171,7 @@ def launch(target: Path, env: Environment | None = None, autostarted: bool = Fal
     if autostarted and env.platform is Platform.MACOS:
         return True
     try:
-        subprocess.Popen([str(target), "tray"], stdin=subprocess.DEVNULL)
+        proc.popen([str(target), "tray"], stdin=subprocess.DEVNULL)
     except OSError:
         return False
     return True

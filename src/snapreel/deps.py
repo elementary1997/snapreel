@@ -11,6 +11,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 
+from . import proc
 from .config import Config
 from .platform_info import Environment, Platform, detect
 
@@ -97,7 +98,7 @@ def _library_present(name: str) -> bool:
     if not shutil.which("ldconfig"):
         return True  # спросить не у кого — не пугаем человека зря
     try:
-        listing = subprocess.run(
+        listing = proc.run(
             ["ldconfig", "-p"], capture_output=True, text=True, errors="replace", timeout=10
         )
     except (OSError, subprocess.SubprocessError):
@@ -205,7 +206,7 @@ def run(commands: list[list[str]]) -> tuple[bool, str]:
     """Выполняет команды по очереди; первая же неудача останавливает установку."""
     for command in commands:
         try:
-            result = subprocess.run(command)
+            result = proc.run(command)
         except OSError as exc:
             return False, f"{' '.join(command)}: {exc}"
         if result.returncode != 0:

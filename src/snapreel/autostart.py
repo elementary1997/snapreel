@@ -20,6 +20,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import proc
 from .platform_info import Environment, Platform, detect
 
 GNOME_SCHEMA = "org.gnome.settings-daemon.plugins.media-keys"
@@ -222,7 +223,7 @@ def remove(env: Environment | None = None) -> Outcome:
 def _gsettings(*args: str) -> str:
     if not shutil.which("gsettings"):
         raise HotkeySetupError("не найден gsettings — это не GNOME")
-    result = subprocess.run(
+    result = proc.run(
         ["gsettings", *args], capture_output=True, text=True, errors="replace", timeout=15
     )
     if result.returncode != 0:
@@ -326,7 +327,7 @@ def windows_shortcut_script(
 
 
 def _powershell(script: str) -> None:
-    result = subprocess.run(
+    result = proc.run(
         ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
         capture_output=True,
         text=True,
@@ -478,8 +479,8 @@ def install_launch_agent() -> Outcome:
     path = launch_agent_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(launch_agent_plist(), encoding="utf-8")
-    subprocess.run(["launchctl", "unload", str(path)], capture_output=True, timeout=30)
-    result = subprocess.run(
+    proc.run(["launchctl", "unload", str(path)], capture_output=True, timeout=30)
+    result = proc.run(
         ["launchctl", "load", str(path)],
         capture_output=True,
         text=True,
@@ -495,6 +496,6 @@ def remove_launch_agent() -> Outcome:
     path = launch_agent_path()
     if not path.is_file():
         return Outcome(True, "автозапуск snapreel не найден")
-    subprocess.run(["launchctl", "unload", str(path)], capture_output=True, timeout=30)
+    proc.run(["launchctl", "unload", str(path)], capture_output=True, timeout=30)
     path.unlink()
     return Outcome(True, f"автозапуск убран: {path}")

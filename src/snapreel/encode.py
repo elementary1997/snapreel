@@ -7,6 +7,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import proc
 from .config import Config
 
 
@@ -66,7 +67,7 @@ def to_gif(source: Path, target: Path, config: Config) -> Path:
     # наружу из этой функции выходит только EncodeError: выше по стеку уже
     # лежит записанный клип, и терять его из-за подробностей запуска нельзя
     try:
-        result = subprocess.run(
+        result = proc.run(
             command, capture_output=True, text=True, errors="replace", timeout=gif_timeout(config)
         )
     except subprocess.TimeoutExpired as exc:
@@ -96,9 +97,7 @@ def probe(path: Path, config: Config) -> MediaInfo | None:
         str(path),
     ]
     try:
-        result = subprocess.run(
-            command, capture_output=True, text=True, errors="replace", timeout=20
-        )
+        result = proc.run(command, capture_output=True, text=True, errors="replace", timeout=20)
         data = json.loads(result.stdout or "{}")
         stream = (data.get("streams") or [{}])[0]
         duration = float((data.get("format") or {}).get("duration", 0.0))

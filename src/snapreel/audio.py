@@ -16,6 +16,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
+from . import proc
 from .config import Config
 from .platform_info import Environment, Platform, detect
 
@@ -47,9 +48,7 @@ def devices(config: Config | None = None, env: Environment | None = None) -> lis
 def _ffmpeg_devices(config: Config, tail: list[str]) -> str:
     """`-list_devices true` печатает список и завершается ошибкой — это норма."""
     command = [config.ffmpeg_path, "-hide_banner", "-list_devices", "true", *tail]
-    result = subprocess.run(
-        command, capture_output=True, text=True, errors="replace", timeout=TIMEOUT
-    )
+    result = proc.run(command, capture_output=True, text=True, errors="replace", timeout=TIMEOUT)
     return result.stderr
 
 
@@ -114,7 +113,7 @@ def parse_pactl(output: str) -> list[Device]:
 def _pulse_devices() -> list[Device]:
     if not shutil.which("pactl"):
         return []
-    result = subprocess.run(
+    result = proc.run(
         ["pactl", "list", "short", "sources"],
         capture_output=True,
         text=True,

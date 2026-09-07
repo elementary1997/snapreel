@@ -6,6 +6,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from .. import proc
+
 
 class ClipboardError(RuntimeError):
     pass
@@ -25,7 +27,7 @@ def macos_copy_files(paths: list[Path]) -> None:
     script = (
         f"set the clipboard to {{{items}}}" if len(paths) > 1 else f"set the clipboard to {items}"
     )
-    result = subprocess.run(
+    result = proc.run(
         ["osascript", "-e", script], capture_output=True, text=True, errors="replace", timeout=15
     )
     if result.returncode != 0:
@@ -33,7 +35,7 @@ def macos_copy_files(paths: list[Path]) -> None:
 
 
 def macos_copy_text(text: str) -> None:
-    subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=True, timeout=15)
+    proc.run(["pbcopy"], input=text.encode("utf-8"), check=True, timeout=15)
 
 
 # --- Linux ---------------------------------------------------------------
@@ -43,7 +45,7 @@ def wayland_copy_files(paths: list[Path]) -> None:
     if not shutil.which("wl-copy"):
         raise ClipboardError("не найден wl-copy — установите wl-clipboard")
     payload = "\n".join(file_uri(p) for p in paths) + "\n"
-    subprocess.run(
+    proc.run(
         ["wl-copy", "--type", "text/uri-list"],
         input=payload.encode("utf-8"),
         check=True,
@@ -54,7 +56,7 @@ def wayland_copy_files(paths: list[Path]) -> None:
 def wayland_copy_text(text: str) -> None:
     if not shutil.which("wl-copy"):
         raise ClipboardError("не найден wl-copy — установите wl-clipboard")
-    subprocess.run(["wl-copy"], input=text.encode("utf-8"), check=True, timeout=15)
+    proc.run(["wl-copy"], input=text.encode("utf-8"), check=True, timeout=15)
 
 
 def x11_copy_files(paths: list[Path]) -> None:
@@ -67,7 +69,7 @@ def x11_copy_files(paths: list[Path]) -> None:
     if not shutil.which("xclip"):
         raise ClipboardError("не найден xclip — установите xclip")
     payload = "\n".join(file_uri(p) for p in paths) + "\n"
-    process = subprocess.Popen(
+    process = proc.popen(
         ["xclip", "-selection", "clipboard", "-t", "text/uri-list"],
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
@@ -81,7 +83,7 @@ def x11_copy_files(paths: list[Path]) -> None:
 def x11_copy_text(text: str) -> None:
     if not shutil.which("xclip"):
         raise ClipboardError("не найден xclip — установите xclip")
-    process = subprocess.Popen(
+    process = proc.popen(
         ["xclip", "-selection", "clipboard"],
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,

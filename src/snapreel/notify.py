@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 
+from . import proc
 from .platform_info import Environment, Platform, detect
 
 
@@ -23,12 +24,12 @@ def send(title: str, message: str, env: Environment | None = None) -> None:
 
 def _macos(title: str, message: str) -> None:
     script = f'display notification "{_escape(message)}" with title "{_escape(title)}"'
-    subprocess.run(["osascript", "-e", script], capture_output=True, timeout=10)
+    proc.run(["osascript", "-e", script], capture_output=True, timeout=10)
 
 
 def _linux(title: str, message: str) -> None:
     if shutil.which("notify-send"):
-        subprocess.run(
+        proc.run(
             ["notify-send", "--app-name=snapreel", "--expire-time=4000", title, message],
             capture_output=True,
             timeout=10,
@@ -47,7 +48,7 @@ def _windows(title: str, message: str) -> None:
         "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('snapreel')"
         ".Show([Windows.UI.Notifications.ToastNotification]::new($t))"
     )
-    subprocess.run(
+    proc.run(
         ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
         capture_output=True,
         timeout=15,

@@ -7,6 +7,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from .. import proc
 from ..region import Region
 from .base import CaptureBackend, CaptureError, encode_args, require_binary
 
@@ -87,7 +88,7 @@ class AvFoundationBackend(CaptureBackend):
     # --- пробы устройства -------------------------------------------------
 
     def _list_devices(self) -> str:
-        result = subprocess.run(
+        result = proc.run(
             [
                 self.config.ffmpeg_path,
                 "-hide_banner",
@@ -126,7 +127,7 @@ class AvFoundationBackend(CaptureBackend):
 
         logical = virtual_desktop()
         try:
-            result = subprocess.run(
+            result = proc.run(
                 [
                     self.config.ffmpeg_path,
                     "-hide_banner",
