@@ -197,12 +197,15 @@ jobs:
           # проверяются целиком. Окон при этом не открывается: геометрия
           # задана флагом, рамка выключена — иначе задание ждало бы человека.
           bin="./dist/snapreel${{ runner.os == 'Windows' && '.exe' || '' }}"
-          clips="$RUNNER_TEMP/acceptance"
+          # каталог берём в рабочей копии, а не в $RUNNER_TEMP: на Windows
+          # тот приезжает с обратными слешами (D:\a\_temp), и bash понимает
+          # их как экранирование, а не как путь
+          clips="acceptance-clips"
           mkdir -p "$clips"
-          "$bin" config > "$RUNNER_TEMP/acc-config.toml"
+          "$bin" config > acceptance-config.toml
 
           set +e
-          out="$("$bin" --config "$RUNNER_TEMP/acc-config.toml" record \
+          out="$("$bin" --config acceptance-config.toml record \
             --region 320x240+0+0 --seconds 2 --min-seconds 0 --no-indicator \
             --output-dir "$clips" 2>&1)"
           code=$?
@@ -240,7 +243,7 @@ jobs:
           # Ради этого всё и затевалось: «вставляется файлом, а не путём».
           # Спрашиваем у самой Windows, что лежит в буфере после записи —
           # CF_HDROP она отдаёт как FileDropList
-          clips="$RUNNER_TEMP/acceptance"
+          clips="acceptance-clips"
           # без клипа проверять нечего, но и молчать нельзя: предыдущий шаг
           # обязан был его записать, и его отсутствие — дефект, а не повод
           # пропустить проверку
