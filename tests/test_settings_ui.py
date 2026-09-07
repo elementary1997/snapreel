@@ -319,8 +319,19 @@ def test_closing_the_window_waits_for_the_audio_thread(window):
 # --- то, что человек читает после сохранения -------------------------------
 
 
-def refusing(message: str):
-    """Подмена `autostart.install`, которая отказывается назначить комбинацию."""
+def declining(message: str):
+    """Подмена `autostart.install`: система комбинацию не принимает, и это норма.
+
+    Так отвечает любой не-GNOME рабочий стол и macOS: не поломка, а «здесь
+    так не делается».
+    """
+    from snapreel.autostart import Outcome
+
+    return lambda combination: Outcome(False, message)
+
+
+def failing(message: str):
+    """Подмена `autostart.install`: регистрация сорвалась — это уже поломка."""
     from snapreel.autostart import HotkeySetupError
 
     def refuse(combination: str):
@@ -336,7 +347,7 @@ def test_a_saved_hotkey_says_one_line_when_the_tray_listens(window, monkeypatch)
     любом не-GNOME рабочем столе система комбинацию не принимает, а иконка в
     трее её слушает — и всё работает.
     """
-    monkeypatch.setattr("snapreel.autostart.install", refusing("а это не GNOME"))
+    monkeypatch.setattr("snapreel.autostart.install", declining("а это не GNOME"))
     monkeypatch.setattr("snapreel.hotkeys.why_silent", lambda env=None: None)
 
     assert window._apply_hotkey(window.config) == "комбинации слушает иконка в трее"
@@ -345,11 +356,23 @@ def test_a_saved_hotkey_says_one_line_when_the_tray_listens(window, monkeypatch)
 def test_a_saved_hotkey_explains_itself_when_nobody_listens(window, monkeypatch):
     monkeypatch.setattr(
         "snapreel.autostart.install",
-        refusing("назначьте средствами рабочего стола команду: snapreel record"),
+        declining("назначьте средствами рабочего стола команду: snapreel record"),
     )
     monkeypatch.setattr("snapreel.hotkeys.why_silent", lambda env=None: "в Wayland нельзя")
 
     assert "средствами рабочего стола" in window._apply_hotkey(window.config)
+
+
+def test_a_broken_registration_is_not_dressed_up_as_success(window, monkeypatch):
+    """«Не приняли gsettings» — поломка, а не «здесь так не принято».
+
+    Спрятать её за бодрой строкой значит оставить человека без ярлыка,
+    которого он ждёт, и без единого слова о причине.
+    """
+    monkeypatch.setattr("snapreel.autostart.install", failing("powershell вернул ошибку"))
+    monkeypatch.setattr("snapreel.hotkeys.why_silent", lambda env=None: None)
+
+    assert window._apply_hotkey(window.config) == "powershell вернул ошибку"
 
 
 def test_the_theme_is_offered_in_words():
