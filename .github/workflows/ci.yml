@@ -13,6 +13,11 @@ jobs:
   test:
     # Проект заявляет три платформы, поэтому и проверяется на трёх.
     # Тесты headless: ни экрана, ни ffmpeg, ни буфера обмена им не нужно.
+    #
+    # Срок заданию нужен: без него зависший тест — а тесты тут поднимают
+    # окна Qt и ждут потоков — держал бы раннер шесть часов по умолчанию,
+    # и «упало» выглядело бы как «ещё идёт». Прогон укладывается в минуту.
+    timeout-minutes: 15
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -43,6 +48,7 @@ jobs:
         run: pytest -q
 
   lint:
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -64,6 +70,7 @@ jobs:
 
   smoke:
     # Сквозная проверка настоящей записи: x11grab по виртуальному экрану Xvfb.
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

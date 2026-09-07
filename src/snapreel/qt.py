@@ -17,7 +17,7 @@ import sys
 from . import resources, theme
 from .config import Config
 from .errors import OverlayUnavailable
-from .platform_info import detect
+from .platform_info import detect, enable_dpi_awareness
 
 # Платформы Qt, при которых окон не будет: их выбирают, когда настоящая не
 # поднялась (или когда так попросили тесты).
@@ -72,6 +72,10 @@ def application(config: Config | None = None) -> tuple[object, bool]:
         return existing, False
 
     _refuse_early()
+    # режим DPI задаётся процессу, а не тулкиту, и только до его подъёма:
+    # окно записи меряет логическими точками, а gdigrab — физическими
+    # пикселями, и на масштабе 125% это разные прямоугольники
+    enable_dpi_awareness()
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName("snapreel")

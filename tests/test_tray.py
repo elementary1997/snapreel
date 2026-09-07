@@ -101,6 +101,39 @@ def test_recording_happens_in_the_tray_itself(tray_app):
     assert not tray_app.app.recording
 
 
+def test_the_packing_leaves_the_main_thread(tray_app):
+    """ffmpeg дописывает файл и собирает GIF минутами — иконка ждать не может."""
+    started = threading.Event()
+    release = threading.Event()
+
+    def pack():
+        started.set()
+        assert release.wait(5)
+
+    tray_app.app._record_clip = lambda as_gif: pack
+    tray_app.app.record()
+
+    assert started.wait(5)  # главный поток уже вернулся, а хвост ещё идёт
+    assert tray_app.app.recording  # и запись всё ещё считается идущей
+    release.set()
+    tray_app.app.join()
+    assert not tray_app.app.recording
+
+
+def test_a_failed_packing_is_reported_too(tray_app):
+    """Сбой буфера или сборки GIF приходит человеку тем же уведомлением."""
+
+    def refuse():
+        raise CaptureError("запись не создала файл")
+
+    tray_app.app._record_clip = lambda as_gif: refuse
+    tray_app.app.record()
+    tray_app.app.join()
+
+    assert "запись не вышла" in tray_app.notes[0]
+    assert not tray_app.app.recording
+
+
 def test_the_gif_item_asks_for_a_gif(tray_app):
     tray_app.app.record_gif()
 
@@ -146,6 +179,45 @@ def test_a_failed_recording_is_reported_and_does_not_raise(tray_app, monkeypatch
     assert not tray_app.app.recording
 
 
+def test_no_recording_starts_over_the_settings_window(tray_app, monkeypatch):
+    """Окно настроек модально: оверлей поверх него не получил бы ни мыши, ни Esc."""
+    monkeypatch.setattr(
+        "snapreel.settings_ui.open_settings",
+        lambda config, path=None: tray_app.app.record(),
+    )
+
+    tray_app.app.open_settings()
+
+    assert tray_app.recorded == []
+    assert tray_app.notes == ["сначала закройте окно настроек"]
+
+
+def test_the_settings_window_takes_the_hotkeys_off(tray_app, monkeypatch):
+    """Комбинацию в окне нажимают — глобальный слушатель принял бы это за запись."""
+    bound = []
+    monkeypatch.setattr(tray_app.app, "bind_hotkeys", lambda: bound.append("on"))
+    monkeypatch.setattr(tray_app.app, "unbind_hotkeys", lambda: bound.append("off"))
+    monkeypatch.setattr(
+        "snapreel.settings_ui.open_settings",
+        lambda config, path=None: bound.append("окно"),
+    )
+
+    tray_app.app.open_settings()
+
+    assert bound == ["off", "окно", "on"]
+
+
+def test_a_broken_config_still_gets_the_hotkeys_back(tray_app, monkeypatch):
+    """Иначе испорченный конфиг оставил бы человека вовсе без комбинаций."""
+    bound = []
+    monkeypatch.setattr(tray_app.app, "bind_hotkeys", lambda: bound.append("on"))
+    tray_app.app.config_path.write_text("fps = ", encoding="utf-8")
+
+    tray_app.app.reload()
+
+    assert bound == ["on"]
+
+
 def test_a_cancelled_selection_says_nothing(tray_app, monkeypatch):
     """Esc в оверлее — это ответ человека, а не сбой, о котором надо шуметь."""
 
@@ -183,9 +255,13 @@ def test_a_hotkey_press_hands_the_recording_to_the_main_thread(tray_app):
     jobs = []
     tray_app.app.attach(FakeIcon(jobs))
 
-    threading.Thread(target=tray_app.app.record).start()
-    while not jobs:
-        pass
+    thread = threading.Thread(target=tray_app.app.record)
+    thread.start()
+    thread.join(5)
+    deadline = time.monotonic() + 5
+    while not jobs and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert jobs, "заявка из чужого потока не дошла до главного"
 
     assert tray_app.recorded == []  # ещё ничего не началось: ждём главный поток
     jobs.pop()()  # а это уже он
@@ -535,7 +611,8 @@ def test_recording_takes_the_config_the_tray_has_now(tmp_path, monkeypatch):
     """Правки в окне настроек действуют на следующую запись, а не с перезапуска."""
     seen = []
     app = tray.TrayApp(Config(), tmp_path / "config.toml", ENV, notifier=lambda *_: None)
-    monkeypatch.setattr("snapreel.recorder.record", lambda config, **kw: seen.append(config))
+    monkeypatch.setattr("snapreel.recorder.start", lambda config, **kw: seen.append(config))
+    monkeypatch.setattr("snapreel.recorder.finish", lambda session: None)
 
     app.config.fps = 60
     app.record()

@@ -166,30 +166,60 @@ class TrayApp:
         self.record(as_gif=True)
 
     def _record_now(self, as_gif: bool) -> None:
-        """Запись целиком, от выделения до буфера обмена, в этом же процессе."""
+        """Выделение и запись — здесь; упаковка — фоновым потоком."""
         if self.recording:
             self._notify("snapreel", "запись уже идёт")
             return
+        if self.settings_open:
+            # окно настроек модально на всё приложение: оверлей выделения
+            # открылся бы поверх него и не получил бы ни мыши, ни Esc
+            self._notify("snapreel", "сначала закройте окно настроек")
+            return
         self._busy = True
         self.refresh()
+        tail = None
         try:
-            self._record_clip(as_gif)
+            tail = self._record_clip(as_gif)
         except SelectionCancelled:
             pass  # человек передумал — говорить ему об этом незачем
         except Exception as exc:
-            # сбой записи не гасит иконку, а сообщение уходит уведомлением:
-            # у оконной сборки Windows потоков вывода нет, и стандартное
-            # «напечатали в stderr» человек бы не увидел
-            self._notify("snapreel", f"запись не вышла: {exc}")
+            self._blame(exc)
+        if tail is None:
+            self._busy = False
+            self.refresh()
+            return
+        # дальше ни одного окна: ffmpeg дописывает файл, собирает GIF и
+        # кладёт его в буфер — это секунды, а на GIF и минуты. В главном
+        # потоке иконка всё это время была бы немой
+        self._threads.append(_start(lambda: self._pack(tail)))
+
+    def _pack(self, tail: Callable[[], None]) -> None:
+        try:
+            tail()
+        except Exception as exc:
+            self._blame(exc)
         finally:
             self._busy = False
             self.refresh()
 
-    def _record_here(self, as_gif: bool) -> None:
-        """Запись по умолчанию — прямо здесь, в цикле событий трея."""
-        from .recorder import record
+    def _blame(self, exc: Exception) -> None:
+        """Сбой записи не гасит иконку, но и молчать о нём нельзя.
 
-        record(self.config, as_gif=as_gif, env=self.env)
+        Сообщение уходит уведомлением: у оконной сборки Windows потоков
+        вывода нет, и привычное «напечатали в stderr» человек не увидит.
+        """
+        self._notify("snapreel", f"запись не вышла: {exc}")
+
+    def _record_here(self, as_gif: bool) -> Callable[[], None]:
+        """Запись по умолчанию — прямо здесь, в цикле событий трея.
+
+        Возвращается «хвост» сценария — всё, чему главный поток уже не
+        нужен: его трей доигрывает в фоне (ADR-0010).
+        """
+        from . import recorder
+
+        session = recorder.start(self.config, as_gif=as_gif, env=self.env)
+        return lambda: recorder.finish(session)
 
     def _on_main(self, job: Callable[[], None]) -> None:
         """Переносит работу в главный поток, если есть кому её передать."""
@@ -206,10 +236,16 @@ class TrayApp:
 
         Окно живёт в этом же процессе: цикл событий Qt один на приложение, и
         диалог просто вкладывается в него — как и оверлей записи.
+
+        На это время комбинации снимаются. Причин две, и обе настоящие: их
+        тут же **нажимают**, назначая новые, и глобальный слушатель принял бы
+        это нажатие за просьбу записать; а начатая запись открыла бы свой
+        оверлей поверх модального окна — без мыши и без Esc, то есть навсегда.
         """
         if self._window_open:
             return
         self._window_open = True
+        self.unbind_hotkeys()
         self.refresh()
         try:
             from .settings_ui import open_settings
@@ -219,15 +255,19 @@ class TrayApp:
             self._notify("snapreel", f"не открыть настройки: {exc}")
         finally:
             self._window_open = False
-        self.reload()
+        self.reload()  # заодно вешает комбинации обратно — уже новые
 
     def reload(self) -> None:
-        """Подхватывает изменённый конфиг: комбинации могли стать другими."""
+        """Подхватывает изменённый конфиг: комбинации могли стать другими.
+
+        Комбинации вешаются в любом случае — даже когда конфиг не прочитан:
+        на время окна настроек они сняты, и уйти без них значило бы оставить
+        человека с испорченного конфига вовсе без горячих клавиш.
+        """
         try:
             self.config = config_module.load(self.config_path)
         except (OSError, ValueError, TypeError) as exc:
             self._notify("snapreel", f"конфиг не прочитан: {exc}")
-            return
         self.bind_hotkeys()
         self.refresh()
 
