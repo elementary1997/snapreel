@@ -38,6 +38,9 @@ STARTUP_NAME = "Snapreel Tray.lnk"
 # То же имя до 0.6.3: у кого автозапуск прописан им, тот вправе его снять.
 LEGACY_STARTUP_NAME = "Snapreel (трей).lnk"
 DESKTOP_ENTRY_NAME = "snapreel.desktop"
+# Подпись ярлыка для систем, чья кодировка русского не знает: там наша
+# обычная превратилась бы в строку вопросительных знаков.
+ASCII_DESCRIPTION = "Snapreel: screen area to clipboard"
 
 
 class HotkeySetupError(RuntimeError):
@@ -349,13 +352,22 @@ def windows_shortcut_script(
     """
     argv = argv or launch_argv()
     arguments = quote(argv[1:])
-    lost = unrepresentable(str(path), argv[0], arguments, description)
+    # Проверяем только то, от чего ярлык перестаёт работать: путь самого
+    # ярлыка, путь к программе и её аргументы. Описание в этот список не
+    # входит намеренно — испорченное, оно всего лишь показывается знаками
+    # вопроса в подсказке, а отказ из-за него отнял бы у человека рабочий
+    # хоткей на любой нерусской Windows: описание-то наше и русское
+    lost = unrepresentable(str(path), argv[0], arguments)
     if lost is not None:
         raise HotkeySetupError(
             f"Windows не примет такой ярлык: в «{lost}» есть буквы, которых нет в "
             "кодировке системы, и она молча заменит их вопросительными знаками. "
             "Поставьте snapreel в папку с латинским именем."
         )
+    if unrepresentable(description) is not None:
+        # подпись всё равно не покажется — пусть будет короткая латиницей,
+        # а не строка из вопросительных знаков
+        description = ASCII_DESCRIPTION
     script = (
         "$shell = New-Object -ComObject WScript.Shell; "
         f"$link = $shell.CreateShortcut({proc.ps_string(str(path))}); "

@@ -268,6 +268,37 @@ def test_a_representable_path_goes_through(monkeypatch):
     assert "Remove-Item" not in script
 
 
+def test_our_own_russian_caption_never_blocks_the_shortcut(monkeypatch):
+    """Описание ярлыка — наш текст, и на английской Windows он непредставим.
+
+    Отказ из-за него отнял бы у человека рабочий хоткей там, где он
+    работал: испорченная подпись всего лишь показывается вопросительными
+    знаками, а ярлык при этом сохраняется и работает — проверено на живом
+    powershell. Поэтому подпись в проверку не входит, а на такой системе
+    подменяется латинской.
+    """
+    monkeypatch.setattr(autostart, "_system_codec", lambda: "cp1252")  # английская Windows
+
+    script = autostart.windows_shortcut_script(
+        pathlib.Path(r"C:\Startup\Snapreel Tray.lnk"), argv=[r"C:\Program Files\snapreel.exe"]
+    )
+
+    assert "$link.Save()" in script
+    assert autostart.ASCII_DESCRIPTION in script
+    assert "записать область" not in script  # вопросительных знаков не будет
+
+
+def test_a_bad_path_is_still_refused_on_that_system(monkeypatch):
+    """Отказ остаётся там, где ярлык действительно перестанет работать."""
+    monkeypatch.setattr(autostart, "_system_codec", lambda: "cp1252")
+
+    with pytest.raises(HotkeySetupError):
+        autostart.windows_shortcut_script(
+            pathlib.Path(r"C:\Startup\Snapreel Tray.lnk"),
+            argv=[r"C:\Users\Иван\snapreel.exe"],
+        )
+
+
 def test_other_systems_are_not_asked_about_windows_encodings():
     """Вопрос про ANSI-кодировку осмысленен только на Windows."""
     assert autostart.unrepresentable(r"C:\Users\トレイ\snapreel.exe") is None
