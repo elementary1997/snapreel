@@ -85,6 +85,52 @@ def test_num_lock_does_not_eat_the_combination(listener_class):
         listener.stop()
 
 
+def test_the_combination_can_be_taken_again_right_after_it_was_dropped(listener_class):
+    """Так трей перевешивает комбинации после правки конфига — сразу за снятием.
+
+    Сервер отпускает прежний захват не в тот же миг, и первая попытка
+    натыкается на него же: без повторов это отказ «комбинацию уже кто-то
+    держит» на ровном месте.
+    """
+    first = listener_class({"<ctrl>+<shift>+<alt>+r": lambda: None})
+    first.start()
+    first.stop()
+
+    caught = threading.Event()
+    second = listener_class({"<ctrl>+<shift>+<alt>+r": caught.set})
+    second.start()  # без пауз, как это делает `TrayApp.reload`
+    try:
+        time.sleep(0.3)
+        _press("ctrl+shift+alt+r")
+
+        assert caught.wait(5), "перевешенная комбинация не сработала"
+    finally:
+        second.stop()
+
+
+def test_a_combination_taken_for_a_moment_is_waited_out(listener_class):
+    """Одной попытки мало: сосед мог взять комбинацию на мгновение.
+
+    Так это и выглядит при перевешивании — прежний захват ещё у сервера, а
+    новый уже просят. Здесь роль прежнего играет отдельный слушатель,
+    который отпускает комбинацию через мгновение после нашей попытки.
+    """
+    rival = listener_class({"<ctrl>+<shift>+<alt>+r": lambda: None})
+    rival.start()
+    threading.Timer(0.2, rival.stop).start()
+
+    caught = threading.Event()
+    ours = listener_class({"<ctrl>+<shift>+<alt>+r": caught.set})
+    ours.start()  # первая попытка упрётся в соседа, следующая пройдёт
+    try:
+        time.sleep(0.3)
+        _press("ctrl+shift+alt+r")
+
+        assert caught.wait(5)
+    finally:
+        ours.stop()
+
+
 def test_a_stopped_listener_lets_the_combination_go(listener_class):
     seen: list[str] = []
     listener = listener_class({"<ctrl>+<shift>+<alt>+r": lambda: seen.append("наша")})

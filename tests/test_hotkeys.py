@@ -158,6 +158,29 @@ def test_the_probe_repeats_a_reason_it_already_knows():
     assert "Wayland" in hotkeys.probe(Config(), WAYLAND)
 
 
+def test_a_machine_without_python_xlib_gets_our_own_error(monkeypatch):
+    """Голый ModuleNotFoundError прошёл бы мимо `except HotkeyError` в трее.
+
+    python-xlib приезжает вместе с pynput и есть не везде: на macOS и
+    Windows его X-частей нет вовсе. Иконка не вправе гаснуть из-за этого.
+    """
+    import builtins
+
+    real_import = builtins.__import__
+
+    def refuse(name, *args, **kwargs):
+        if name == "Xlib" or name.startswith("Xlib."):
+            raise ModuleNotFoundError("No module named 'Xlib'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse)
+
+    assert hotkeys_x11.available() is False
+    assert hotkeys_x11.has_record() is None  # «не знаем», а не «нет»
+    with pytest.raises(hotkeys_x11.GrabError):
+        hotkeys_x11._open()
+
+
 def test_a_broken_pynput_is_not_called_a_missing_one(monkeypatch, x_server):
     """pynput сообщает о неудаче подключения к X обычным ImportError.
 

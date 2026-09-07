@@ -85,7 +85,8 @@ def test_run_stops_at_first_failure(monkeypatch):
         def __init__(self, code):
             self.returncode = code
 
-    def fake_run(command):
+    def fake_run(command, **kwargs):
+        # на Windows `proc.run` добавляет флаг «без консольного окна»
         calls.append(command)
         return Result(1 if len(calls) == 1 else 0)
 

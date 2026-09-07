@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import select
 import threading
+import time
 from collections.abc import Callable
 
 # Клавиши, у которых имя X отличается от нашего. Остальные (буквы, цифры,
@@ -42,6 +43,14 @@ KEYSYMS = {
     "print": "Print",
     "printscreen": "Print",
 }
+
+
+# Сколько раз пробуем забрать комбинации и сколько ждём между попытками.
+# Прежний захват сервер отпускает не в тот же миг, а трей перевешивает
+# комбинации сразу за снятием: полсекунды терпения дешевле отказа на ровном
+# месте, и на них же человек не успевает ничего заметить
+ATTEMPTS = 5
+RETRY_PAUSE = 0.15
 
 
 class GrabError(RuntimeError):
@@ -91,12 +100,34 @@ class Listener:
     # --- жизненный цикл ---------------------------------------------------
 
     def start(self) -> None:
+        """Забирает комбинации себе и начинает слушать.
+
+        Попыток несколько: сервер освобождает чужие захваты не мгновенно, а
+        перевешивание комбинаций после правки конфига идёт сразу за снятием
+        прежних — первая попытка натыкалась бы на них же.
+        """
+        for attempt in range(ATTEMPTS):
+            if self._grab():
+                break
+            self._release()
+            if attempt == ATTEMPTS - 1:
+                raise GrabError(
+                    "комбинацию уже кто-то держит — рабочий стол, другое приложение "
+                    "или уже запущенный snapreel. Выберите другую в настройках."
+                )
+            time.sleep(RETRY_PAUSE)
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def _grab(self) -> bool:
+        """Одна попытка забрать все комбинации. False — их держит кто-то ещё."""
         from Xlib import X, error
 
         self._display = _open()
         root = self._display.screen().root
         slop_masks = _slop_masks()
         catcher = error.CatchError(error.BadAccess)
+        self._grabs = {}
         for spec, action in self._bindings.items():
             code, mask = _combination(self._display, spec)
             self._grabs[(code, mask)] = action
@@ -110,26 +141,23 @@ class Listener:
                     onerror=catcher,
                 )
         self._display.sync()
-        if catcher.get_error() is not None:
-            self.stop()
-            raise GrabError(
-                "комбинацию уже кто-то держит — рабочий стол, другое приложение "
-                "или уже запущенный snapreel. Выберите другую в настройках."
-            )
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
+        return catcher.get_error() is None
+
+    def _release(self) -> None:
+        """Отпускает захваченное: закрытое соединение X разбирает само."""
+        display, self._display = self._display, None
+        if display is not None:
+            try:
+                display.close()
+            except Exception:  # соединения уже нет — тем более отпущено
+                pass
 
     def stop(self) -> None:
         self._stopping.set()
         thread, self._thread = self._thread, None
         if thread is not None:
             thread.join(timeout=2)
-        display, self._display = self._display, None
-        if display is not None:
-            try:
-                display.close()
-            except Exception:  # соединение могло оборваться само
-                pass
+        self._release()
 
     def is_alive(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -218,11 +246,20 @@ def _significant(state: int) -> int:
 
 
 def _open():
-    from Xlib import display
+    """Соединение с X. Любая неудача выходит наружу своим типом.
 
+    Импорт стоит внутри `try` не для красоты: `python-xlib` приезжает вместе
+    с pynput, а pynput ставится не всегда и не везде — на macOS и Windows
+    его X-части нет вовсе. Голый `ModuleNotFoundError` отсюда прошёл бы мимо
+    `except HotkeyError` в трее и погасил бы иконку на старте.
+    """
+    try:
+        from Xlib import display
+    except Exception as exc:  # нет python-xlib — перехватывать нечем
+        raise GrabError(f"нет python-xlib: {exc}") from exc
     try:
         return display.Display()
-    except Exception as exc:  # нет DISPLAY, нет python-xlib, сервер отказал
+    except Exception as exc:  # нет DISPLAY, сервер отказал, нет прав
         raise GrabError(f"не подключиться к X-серверу: {exc}") from exc
 
 
