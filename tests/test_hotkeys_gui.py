@@ -1,6 +1,7 @@
 """Перехват комбинаций на живом X-сервере: ловится ли нажатие на самом деле.
 
-Маркер `gui`, потому что нужен настоящий сервер: `xvfb-run pytest -m gui`.
+Маркер `gui`, потому что нужен настоящий сервер и `xdotool`, которым сюда
+шлются нажатия: `xvfb-run pytest -m gui`.
 Слушателя pynput так не проверить — он читает поток RECORD, куда события от
 XTEST не попадают, — а вот `XGrabKey` синтетические нажатия видит, и это
 единственный способ убедиться, что комбинация действительно ловится, не
@@ -28,34 +29,47 @@ def listener_class():
     return Listener
 
 
-def _press(combination: str) -> None:
+@pytest.fixture
+def press():
+    """Посылает нажатие; без xdotool пропускает тест целиком, до начала.
+
+    Пропуск именно здесь, а не внутри теста: `pytest.skip` бросает
+    исключение, и брошенное из `finally` оно съедает всё, что за ним, — в
+    прошлой версии так терялось снятие захвата, и следующие тесты падали с
+    «комбинацию уже кто-то держит». Проверять снаружи дешевле, чем помнить
+    об этом в каждом `finally`.
+    """
     if not shutil.which("xdotool"):
         pytest.skip("нужен xdotool, чтобы послать нажатие")
-    subprocess.run(["xdotool", "key", combination], check=True, timeout=10)
+
+    def send(combination: str) -> None:
+        subprocess.run(["xdotool", "key", combination], check=True, timeout=10)
+
+    return send
 
 
-def test_the_grabbed_combination_reaches_us(listener_class):
+def test_the_grabbed_combination_reaches_us(listener_class, press):
     caught = threading.Event()
     listener = listener_class({"<ctrl>+<shift>+<alt>+r": caught.set})
     listener.start()
     try:
         time.sleep(0.3)  # серверу нужно принять захват
-        _press("ctrl+shift+alt+r")
+        press("ctrl+shift+alt+r")
 
         assert caught.wait(5), "нажатие до нас не дошло"
     finally:
         listener.stop()
 
 
-def test_other_keys_do_not_reach_us(listener_class):
+def test_other_keys_do_not_reach_us(listener_class, press):
     """Перехват берёт только заявленное — чужой ввод snapreel не видит."""
     seen: list[str] = []
     listener = listener_class({"<ctrl>+<shift>+<alt>+r": lambda: seen.append("наша")})
     listener.start()
     try:
         time.sleep(0.3)
-        _press("a")
-        _press("ctrl+shift+alt+g")
+        press("a")
+        press("ctrl+shift+alt+g")
         time.sleep(0.5)
 
         assert seen == []
@@ -63,7 +77,7 @@ def test_other_keys_do_not_reach_us(listener_class):
         listener.stop()
 
 
-def test_num_lock_does_not_eat_the_combination(listener_class):
+def test_num_lock_does_not_eat_the_combination(listener_class, press):
     """Замки клавиатуры живут в тех же битах, что и модификаторы.
 
     Без снятия замков нажатие с включённым Num Lock не совпадало с
@@ -75,17 +89,17 @@ def test_num_lock_does_not_eat_the_combination(listener_class):
     listener.start()
     try:
         time.sleep(0.3)
-        _press("Num_Lock")  # включили
+        press("Num_Lock")  # включили
         time.sleep(0.2)
-        _press("ctrl+shift+alt+r")
+        press("ctrl+shift+alt+r")
 
         assert caught.wait(5), "с включённым Num Lock комбинация не дошла"
     finally:
-        _press("Num_Lock")  # вернули как было
-        listener.stop()
+        listener.stop()  # первым: за ним в этом блоке может не выполниться ничего
+        press("Num_Lock")  # вернули как было
 
 
-def test_the_combination_can_be_taken_again_right_after_it_was_dropped(listener_class):
+def test_the_combination_can_be_taken_again_right_after_it_was_dropped(listener_class, press):
     """Так трей перевешивает комбинации после правки конфига — сразу за снятием.
 
     Сервер отпускает прежний захват не в тот же миг, и первая попытка
@@ -101,14 +115,14 @@ def test_the_combination_can_be_taken_again_right_after_it_was_dropped(listener_
     second.start()  # без пауз, как это делает `TrayApp.reload`
     try:
         time.sleep(0.3)
-        _press("ctrl+shift+alt+r")
+        press("ctrl+shift+alt+r")
 
         assert caught.wait(5), "перевешенная комбинация не сработала"
     finally:
         second.stop()
 
 
-def test_a_combination_taken_for_a_moment_is_waited_out(listener_class):
+def test_a_combination_taken_for_a_moment_is_waited_out(listener_class, press):
     """Одной попытки мало: сосед мог взять комбинацию на мгновение.
 
     Так это и выглядит при перевешивании — прежний захват ещё у сервера, а
@@ -124,7 +138,7 @@ def test_a_combination_taken_for_a_moment_is_waited_out(listener_class):
     ours.start()  # первая попытка упрётся в соседа, следующая пройдёт
     try:
         time.sleep(0.3)
-        _press("ctrl+shift+alt+r")
+        press("ctrl+shift+alt+r")
 
         assert caught.wait(5)
     finally:
@@ -152,7 +166,7 @@ def test_a_key_that_is_not_on_the_layout_closes_the_connection(listener_class):
     assert handles() <= before + 1  # +1 — запас на служебные файлы самого теста
 
 
-def test_a_stopped_listener_lets_the_combination_go(listener_class):
+def test_a_stopped_listener_lets_the_combination_go(listener_class, press):
     seen: list[str] = []
     listener = listener_class({"<ctrl>+<shift>+<alt>+r": lambda: seen.append("наша")})
     listener.start()
@@ -160,7 +174,7 @@ def test_a_stopped_listener_lets_the_combination_go(listener_class):
     listener.stop()
 
     assert not listener.is_alive()
-    _press("ctrl+shift+alt+r")
+    press("ctrl+shift+alt+r")
     time.sleep(0.5)
 
     assert seen == []

@@ -84,7 +84,9 @@ jobs:
         run: |
           sudo apt-get update
           # библиотеки Qt xcb: без них плагин не грузится, и окно не появится
-          sudo apt-get install -y ffmpeg xvfb xclip libegl1 libdbus-1-3 \
+          # xdotool шлёт нажатия в тестах перехвата комбинаций: без него они
+          # пропускаются, и «хоткей не сработал» замечает только человек
+          sudo apt-get install -y ffmpeg xvfb xclip xdotool libegl1 libdbus-1-3 \
             libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-keysyms1 \
             libxcb-xkb1 libxcb-shape0 libxcb-render-util0 libxcb-image0
 
