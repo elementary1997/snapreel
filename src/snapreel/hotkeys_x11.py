@@ -120,27 +120,36 @@ class Listener:
         self._thread.start()
 
     def _grab(self) -> bool:
-        """Одна попытка забрать все комбинации. False — их держит кто-то ещё."""
+        """Одна попытка забрать все комбинации. False — их держит кто-то ещё.
+
+        Разбор комбинации — тоже часть попытки: клавиши может не оказаться на
+        раскладке. Такой отказ уходит наружу, но соединение с X за собой
+        закрывает, а не оставляет висеть до сборщика мусора.
+        """
         from Xlib import X, error
 
         self._display = _open()
-        root = self._display.screen().root
-        slop_masks = _slop_masks()
-        catcher = error.CatchError(error.BadAccess)
-        self._grabs = {}
-        for spec, action in self._bindings.items():
-            code, mask = _combination(self._display, spec)
-            self._grabs[(code, mask)] = action
-            for slop in slop_masks:
-                root.grab_key(
-                    code,
-                    mask | slop,
-                    True,
-                    X.GrabModeAsync,
-                    X.GrabModeAsync,
-                    onerror=catcher,
-                )
-        self._display.sync()
+        try:
+            root = self._display.screen().root
+            slop_masks = _slop_masks()
+            catcher = error.CatchError(error.BadAccess)
+            self._grabs = {}
+            for spec, action in self._bindings.items():
+                code, mask = _combination(self._display, spec)
+                self._grabs[(code, mask)] = action
+                for slop in slop_masks:
+                    root.grab_key(
+                        code,
+                        mask | slop,
+                        True,
+                        X.GrabModeAsync,
+                        X.GrabModeAsync,
+                        onerror=catcher,
+                    )
+            self._display.sync()
+        except BaseException:
+            self._release()
+            raise
         return catcher.get_error() is None
 
     def _release(self) -> None:

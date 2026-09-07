@@ -131,6 +131,27 @@ def test_a_combination_taken_for_a_moment_is_waited_out(listener_class):
         ours.stop()
 
 
+def test_a_key_that_is_not_on_the_layout_closes_the_connection(listener_class):
+    """Отказ разбора — не повод оставлять соединение с X висеть.
+
+    Открытых соединений у процесса столько же, сколько было: считаем их по
+    дескрипторам, потому что счётчика у Xlib нет.
+    """
+    import os
+
+    from snapreel.hotkeys_x11 import GrabError
+
+    def handles() -> int:
+        return len(os.listdir("/proc/self/fd"))
+
+    before = handles()
+    for _ in range(5):
+        with pytest.raises(GrabError):
+            listener_class({"<ctrl>+<alt>+f24": lambda: None}).start()
+
+    assert handles() <= before + 1  # +1 — запас на служебные файлы самого теста
+
+
 def test_a_stopped_listener_lets_the_combination_go(listener_class):
     seen: list[str] = []
     listener = listener_class({"<ctrl>+<shift>+<alt>+r": lambda: seen.append("наша")})
