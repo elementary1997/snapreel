@@ -56,6 +56,16 @@ def test_the_package_starts_processes_only_through_proc():
     assert offenders == []
 
 
+def _catching(seen: dict):
+    """Подмена запуска: запоминает команду и отвечает пустым выводом в байтах."""
+
+    def run(command, **kwargs):
+        seen["command"] = list(command)
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    return run
+
+
 def test_a_powershell_script_keeps_its_cyrillic(monkeypatch):
     """Командной строкой кириллица до PowerShell не доезжает.
 
@@ -64,7 +74,7 @@ def test_a_powershell_script_keeps_its_cyrillic(monkeypatch):
     приёмкой на раннере: `Unable to save shortcut ... (????).lnk`.
     """
     seen: dict = {}
-    monkeypatch.setattr(proc, "run", lambda command, **kwargs: seen.update(command=list(command)))
+    monkeypatch.setattr(proc, "run", _catching(seen))
 
     proc.powershell("$link.Description = 'Snapreel — запись в буфер'")
 
@@ -79,35 +89,67 @@ def test_a_powershell_failure_comes_back_as_words(monkeypatch):
     """В этом режиме PowerShell отдаёт поток ошибок как XML, а не как текст.
 
     Человек увидел бы страницу `<Objs Version=…>` вместо «Не удаётся
-    сохранить ярлык …», поэтому ошибку ловит сама обёртка и печатает её
-    обычным выводом.
+    сохранить ярлык …», поэтому причину печатает хвост самого скрипта.
     """
     seen: dict = {}
-    monkeypatch.setattr(proc, "run", lambda command, **kwargs: seen.update(command=list(command)))
+    monkeypatch.setattr(proc, "run", _catching(seen))
 
     proc.powershell("$s.Save()")
 
     decoded = base64.b64decode(seen["command"][-1]).decode("utf-16-le")
-    assert "try {" in decoded and "catch {" in decoded
-    assert "$_.Exception.Message" in decoded
+    assert "$Error[0].Exception.Message" in decoded
     assert "exit 1" in decoded
+    # оборачивать в try нельзя: внутри него первая ошибка обрывает остаток
+    # блока, а скрипт уведомления на этом и держится
+    assert "try {" not in decoded
 
 
-def test_a_powershell_script_does_not_go_as_a_file(monkeypatch):
-    """У `-File` другой код возврата: ошибка внутри скрипта оставляет ноль.
+def test_console_words_are_decoded_even_before_our_encoding_takes_effect(monkeypatch):
+    """Ошибку разбора PowerShell пишет раньше первой строки скрипта.
 
-    Тогда сорвавшаяся запись ярлыка выглядела бы успехом — а это
-    единственное, по чему мы отличаем прописанный автозапуск от
-    непрописанного. Плюс запуск файла упирается в политику выполнения
-    скриптов, которую групповая политика может запретить совсем.
+    То есть в кодировке консоли, а не в UTF-8: декодированная как UTF-8, она
+    превращается в кракозябры — и человеку снова достаётся невнятица.
     """
-    seen: dict = {}
-    monkeypatch.setattr(proc, "run", lambda command, **kwargs: seen.update(command=list(command)))
+    console = "Отсутствует признак конца строки.".encode("cp866")
+    # на Windows это `oem`, но кодека с таким именем нет на других системах,
+    # а проверять поведение надо в любом прогоне
+    monkeypatch.setattr(proc, "_console_codec", lambda: "cp866")
+    monkeypatch.setattr(
+        proc, "run", lambda command, **kwargs: subprocess.CompletedProcess(command, 1, b"", console)
+    )
 
-    proc.powershell("echo привет")
+    result = proc.powershell("$link = 'незакрытая")
 
-    assert "-File" not in seen["command"]
-    assert "-ExecutionPolicy" not in seen["command"]
+    assert result.stderr == "Отсутствует признак конца строки."
+
+
+def test_a_script_error_is_not_shown_as_xml():
+    """Ошибку разбора PowerShell находит до первой строки — хвост не поможет."""
+    clixml = (
+        '#< CLIXML\n<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell">'
+        '<S S="Error">Строка:1 знак:60_x000D__x000A_</S>'
+        '<S S="Error">Отсутствует признак конца строки.</S></Objs>'
+    )
+    result = subprocess.CompletedProcess(["powershell"], 1, "", clixml)
+
+    message = proc.powershell_message(result)
+
+    assert "Отсутствует признак конца строки" in message
+    assert "<Objs" not in message and "CLIXML" not in message
+
+
+def test_a_readable_error_is_left_alone():
+    result = subprocess.CompletedProcess(["powershell"], 1, "", "не найден файл")
+
+    assert proc.powershell_message(result) == "не найден файл"
+
+
+def test_the_scripts_own_words_win():
+    result = subprocess.CompletedProcess(
+        ["powershell"], 1, "Не удается сохранить ярлык", "#< CLIXML"
+    )
+
+    assert proc.powershell_message(result) == "Не удается сохранить ярлык"
 
 
 def test_the_package_calls_powershell_only_through_proc():

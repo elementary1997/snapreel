@@ -1,3 +1,5 @@
+import pathlib
+
 import pytest
 
 from snapreel import autostart
@@ -85,6 +87,23 @@ def test_gsettings_list_round_trip():
     paths = ["/org/a/", autostart.GNOME_PATH]
     rendered = autostart.format_gsettings_list(paths)
     assert autostart.parse_gsettings_list(rendered) == paths
+
+
+def test_an_apostrophe_in_the_path_does_not_break_the_script(tmp_path):
+    """Каталог человек выбирает сам, и «Ivan's tools» — обычное имя.
+
+    Без удвоения апостроф закрывает строку раньше времени: PowerShell
+    спотыкается на разборе, ярлык не создаётся, а причина приезжает
+    невнятицей — до кода, который умеет объяснять, дело не доходит.
+    """
+    script = autostart.windows_shortcut_script(
+        pathlib.Path(r"D:\Ivan's tools\Snapreel.lnk"), argv=["D:\Ivan's tools\snapreel.exe"]
+    )
+
+    assert "'D:\\Ivan''s tools\\Snapreel.lnk'" in script
+    assert "'D:\\Ivan''s tools\\snapreel.exe'" in script
+    # ни одной строки с одиночным апострофом внутри не осталось
+    assert script.count("'") % 2 == 0
 
 
 def test_windows_shortcut_script_carries_hotkey_and_command(tmp_path):

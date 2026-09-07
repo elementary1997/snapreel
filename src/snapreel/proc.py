@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import subprocess
 from collections.abc import Sequence
 from typing import Any
@@ -47,19 +48,20 @@ def _merged(kwargs: dict[str, Any]) -> dict[str, Any]:
     return {**kwargs, **options}
 
 
-# Обёртка вокруг каждого скрипта: `-EncodedCommand` заставляет powershell
-# сериализовать поток ошибок в CLIXML, и человеку вместо «Не удаётся
-# сохранить ярлык …» приезжает страница XML. Поэтому ошибку ловим сами и
-# печатаем её текстом, а кодировку вывода задаём явно — иначе русские буквы
-# вернутся искажёнными уже на обратном пути.
-_WRAPPER = """[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$ErrorActionPreference = 'Stop'
-try {{
-{script}
-}} catch {{
-    [Console]::Out.WriteLine($_.Exception.Message)
-    exit 1
-}}"""
+# Что дописывается к каждому скрипту. Кодировка вывода — чтобы русские
+# буквы вернулись целыми; хвост — чтобы причина отказа пришла словами:
+# `-EncodedCommand` отдаёт поток ошибок в CLIXML, и человеку иначе приезжает
+# страница XML вместо «Не удаётся сохранить ярлык …».
+#
+# Заворачивать скрипт в try/catch нельзя, хотя это и напрашивается: внутри
+# `try` первая же ошибка обрывает остаток блока, а скрипт уведомления на
+# этом и держится — WinRT ругается на `AppendChild`, но тост показывает.
+# Снаружи такая ошибка обрывает только свой оператор.
+_PROLOGUE = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\n"
+_EPILOGUE = "\nif (-not $?) { [Console]::Out.WriteLine($Error[0].Exception.Message); exit 1 }"
+
+# Так начинается сериализованный поток ошибок PowerShell.
+_CLIXML = "#< CLIXML"
 
 
 def powershell(script: str, timeout: float = 60) -> subprocess.CompletedProcess:
@@ -80,19 +82,82 @@ def powershell(script: str, timeout: float = 60) -> subprocess.CompletedProcess:
     файла упирается в политику выполнения скриптов, которую групповая
     политика может запретить совсем.
 
-    Причина отказа возвращается на стандартном выводе — см. `_WRAPPER`.
-
     Ограничение — длина командной строки (около 32 тысяч знаков): самый
     длинный скрипт проекта даёт 1,7 тысячи, но бесконечно длинный так не
     передать.
     """
-    wrapped = _WRAPPER.format(script=script)
+    wrapped = _PROLOGUE + script + _EPILOGUE
     encoded = base64.b64encode(wrapped.encode("utf-16-le")).decode("ascii")
-    return run(
+    raw = run(
         ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
         capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
         timeout=timeout,
     )
+    return subprocess.CompletedProcess(
+        raw.args, raw.returncode, _decode(raw.stdout), _decode(raw.stderr)
+    )
+
+
+def _decode(raw: bytes | None) -> str:
+    """Расшифровывает вывод, не полагаясь на одну кодировку.
+
+    Свою часть PowerShell отдаёт в UTF-8 — так велит первая строка скрипта.
+    Но ошибку разбора он находит раньше этой строки и пишет её в кодировке
+    консоли (на русской Windows это cp866): декодированная как UTF-8, она
+    превращается в кракозябры, и человеку опять достаётся невнятица вместо
+    причины. Поэтому пробуем сначала UTF-8, потом кодировку консоли — её
+    Python знает под именем `oem`.
+    """
+    if not raw:
+        return ""
+    console = _console_codec()
+    for codec in ("utf-8", *([console] if console else [])):
+        try:
+            return raw.decode(codec)
+        except (UnicodeDecodeError, LookupError):
+            continue  # не эта кодировка или кодека тут нет
+    return raw.decode("utf-8", errors="replace")
+
+
+def _console_codec() -> str | None:
+    """Чем консоль Windows пишет то, что мы не успели перевести в UTF-8.
+
+    `oem` — имя, под которым Python знает кодовую страницу консоли (на
+    русской системе это cp866). За пределами Windows такого кодека нет, и
+    гадать незачем: PowerShell там не запускается.
+    """
+    return "oem" if os.name == "nt" else None
+
+
+def powershell_message(result: subprocess.CompletedProcess) -> str:
+    """Причина отказа человеческими словами, чем бы её ни отдал PowerShell.
+
+    Обычно её печатает хвост скрипта. Но ошибку разбора (скажем, апостроф
+    там, где его не ждали) PowerShell находит до первой строки, и тогда
+    остаётся только поток ошибок — а он в этом режиме приходит в CLIXML.
+    Показывать человеку `<Objs Version="1.1.0.1" …` нельзя, поэтому текст
+    из него достаётся, а если не достаётся — говорим общими словами.
+    """
+    spoken = (result.stdout or "").strip()
+    if spoken:
+        return spoken
+    error = (result.stderr or "").strip()
+    if not error:
+        return "powershell вернул ошибку"
+    if not error.startswith(_CLIXML):
+        return error
+    return _from_clixml(error) or "powershell не разобрал команду"
+
+
+def _from_clixml(payload: str) -> str:
+    """Достаёт человеческий текст из сериализованного потока ошибок."""
+    import html
+    import re
+
+    pieces = []
+    for chunk in re.findall(r"<S[^>]*>(.*?)</S>", payload, flags=re.DOTALL):
+        text = html.unescape(chunk)
+        # переводы строк PowerShell прячет за своими метками
+        text = text.replace("_x000D_", "").replace("_x000A_", "\n")
+        pieces.append(text.strip())
+    return " ".join(piece for piece in pieces if piece).strip()
