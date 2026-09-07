@@ -378,14 +378,6 @@ def windows_shortcut_script(
     )
     if hotkey:
         script += f"$link.Hotkey = {proc.ps_string(to_windows(hotkey))}; "
-    # COM-объект молча выбрасывает то, что не представимо в кодировке
-    # системы: путь с чужими буквами превращается в пустую строку, `Save()`
-    # проходит, и получается ярлык в никуда — а snapreel рапортует об
-    # успехе. Поэтому перечитываем записанное и сверяем.
-    #
-    # Причину при этом не угадываем: разойтись может и от непредставимого
-    # имени папки профиля, и от пути длиннее 260 знаков. Называем факты —
-    # что просили и что получилось, — и обе частые причины разом
     return script + "$link.Save()"
 
 
@@ -530,9 +522,8 @@ def install_autostart(env: Environment | None = None) -> Outcome:
         if env.platform is Platform.WINDOWS:
             path = windows_startup_path()
             path.parent.mkdir(parents=True, exist_ok=True)
-            # уборку неудавшегося ярлыка делает сам скрипт: только он видит,
-            # осталась ли в ярлыке прежняя рабочая цель. Снести такой ярлык
-            # отсюда значило бы отнять у человека работавший автозапуск
+            # непредставимое имя отсеивает сам `windows_shortcut_script` —
+            # до того, как что-то будет создано (см. `unrepresentable`)
             _powershell(
                 windows_shortcut_script(
                     path, argv=tray_argv(), description="Snapreel — иконка в трее"

@@ -299,8 +299,15 @@ def test_a_bad_path_is_still_refused_on_that_system(monkeypatch):
         )
 
 
-def test_other_systems_are_not_asked_about_windows_encodings():
-    """Вопрос про ANSI-кодировку осмысленен только на Windows."""
+def test_other_systems_are_not_asked_about_windows_encodings(monkeypatch):
+    """Вопрос про ANSI-кодировку осмысленен только на Windows.
+
+    Кодировку задаём подменой, а не спрашиваем машину, на которой идёт
+    прогон: тесты гоняются и на Windows, и там настоящий ответ был бы
+    другим — проверка превратилась бы в лотерею по локали раннера.
+    """
+    monkeypatch.setattr(autostart, "_system_codec", lambda: None)
+
     assert autostart.unrepresentable(r"C:\Users\トレイ\snapreel.exe") is None
 
 
