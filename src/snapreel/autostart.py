@@ -349,6 +349,13 @@ def windows_shortcut_script(
     """
     argv = argv or launch_argv()
     arguments = quote(argv[1:])
+    lost = unrepresentable(str(path), argv[0], arguments, description)
+    if lost is not None:
+        raise HotkeySetupError(
+            f"Windows не примет такой ярлык: в «{lost}» есть буквы, которых нет в "
+            "кодировке системы, и она молча заменит их вопросительными знаками. "
+            "Поставьте snapreel в папку с латинским именем."
+        )
     script = (
         "$shell = New-Object -ComObject WScript.Shell; "
         f"$link = $shell.CreateShortcut({proc.ps_string(str(path))}); "
@@ -367,30 +374,41 @@ def windows_shortcut_script(
     # Причину при этом не угадываем: разойтись может и от непредставимого
     # имени папки профиля, и от пути длиннее 260 знаков. Называем факты —
     # что просили и что получилось, — и обе частые причины разом
-    # Убирает ли ярлык за собой, решает тоже скрипт: только он видит, что в
-    # ярлыке осталось. Пустая цель — файл в никуда, его убираем; но если
-    # Windows сохранила прежнюю рабочую цель, трогать нельзя — снеся такой
-    # ярлык, мы отняли бы у человека уже работавший автозапуск
-    why = (
-        "Так бывает, когда в пути есть буквы, которых нет в кодировке системы — "
-        "в самом пути или в имени папки пользователя, — либо когда путь длиннее "
-        "260 знаков."
-    )
-    return script + (
-        "$link.Save(); "
-        f"$saved = $shell.CreateShortcut({proc.ps_string(str(path))}); "
-        f"if ($saved.TargetPath -ne {proc.ps_string(argv[0])}) {{ "
-        f"$asked = {proc.ps_string(argv[0])}; "
-        "if ($saved.TargetPath) { [Console]::Out.WriteLine("
-        "'Windows записала ярлык не так, как просили: вместо ' + $asked + "
-        "' в нём осталось ' + $saved.TargetPath + '. Прежний ярлык не тронут. ' + "
-        f"{proc.ps_string(why)}) }} else {{ "
-        f"Remove-Item -LiteralPath {proc.ps_string(str(path))} -Force; "
-        "[Console]::Out.WriteLine('Windows записала ярлык не так, как просили: вместо ' + "
-        "$asked + ' в нём пусто, поэтому ярлык убран. ' + "
-        f"{proc.ps_string(why)}) }} "
-        "exit 1 }"
-    )
+    return script + "$link.Save()"
+
+
+def unrepresentable(*values: str) -> str | None:
+    """Первое значение, которое не переживёт перевод в кодировку системы.
+
+    Ярлыки создаёт COM-объект `WScript.Shell`, и всё, что он получает, он
+    переводит в ANSI-кодировку системы: непредставимое молча превращается в
+    «?» или в пустую строку — `Save()` при этом проходит. Разбирать
+    последствия бесполезно: прочитать ярлык обратно можно только тем же
+    COM-объектом, а он и файл в непредставимой папке не откроет, и пустоту
+    от собственной неудачной записи не отличит — уборка «по итогам» сносила
+    чужие рабочие ярлыки. Поэтому спрашиваем заранее: так мы ничего не
+    портим и говорим человеку правду до того, как система сделает вид, что
+    всё записано.
+    """
+    codec = _system_codec()
+    if codec is None:
+        return None
+    for value in values:
+        try:
+            if value.encode(codec, errors="replace").decode(codec, errors="replace") != value:
+                return value
+        except (LookupError, UnicodeError):
+            return None  # кодировку не спросить — значит и ограничения не знаем
+    return None
+
+
+def _system_codec() -> str | None:
+    """Кодировка, в которую Windows переводит отданное COM-объектам.
+
+    `mbcs` — имя, под которым Python знает ANSI-кодировку системы. За
+    пределами Windows вопрос бессмысленный: ярлыков там нет.
+    """
+    return "mbcs" if os.name == "nt" else None
 
 
 def _powershell(script: str) -> None:

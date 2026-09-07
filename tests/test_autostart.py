@@ -233,39 +233,48 @@ def test_installing_drops_the_old_shortcut(monkeypatch, tmp_path):
     assert not legacy.exists()
 
 
-def test_the_shortcut_is_read_back_after_saving():
-    """COM-объект молча выбрасывает непредставимый путь, а `Save()` проходит.
+def test_an_unrepresentable_path_is_refused_before_anything_is_written(monkeypatch):
+    """Спрашиваем заранее, а не разбираем последствия.
 
-    Получается ярлык в никуда, и snapreel рапортует об успехе: человек
-    уверен, что трей поднимется при входе, а тот не поднимается. Поэтому
-    записанное перечитывается и сверяется.
+    COM-объект молча заменяет непредставимое вопросительными знаками или
+    пустотой, а `Save()` при этом проходит. Прочитать записанное обратно
+    можно только тем же объектом — и он не отличит собственную неудачу от
+    файла, который не смог открыть; уборка «по итогам» сносила рабочие
+    ярлыки. Поэтому отказ идёт до того, как что-то создано.
     """
+    # так это выглядит на русской Windows: кириллица представима, иероглифы нет
+    monkeypatch.setattr(autostart, "_system_codec", lambda: "cp1251")
+
+    with pytest.raises(HotkeySetupError) as failure:
+        autostart.windows_shortcut_script(
+            pathlib.Path(r"C:\Startup\Snapreel Tray.lnk"),
+            argv=[r"C:\Users\トレイ\snapreel.exe"],
+        )
+
+    assert "не примет такой ярлык" in str(failure.value)
+    assert "латинским именем" in str(failure.value)
+
+
+def test_a_representable_path_goes_through(monkeypatch):
+    monkeypatch.setattr(autostart, "_system_codec", lambda: "cp1251")
+
     script = autostart.windows_shortcut_script(
         pathlib.Path(r"C:\Startup\Snapreel Tray.lnk"), argv=[r"C:\Program Files\snapreel.exe"]
     )
 
-    assert "$saved = $shell.CreateShortcut" in script
-    assert "$saved.TargetPath -ne" in script
-    assert "exit 1" in script
-    # причину не угадываем: разойтись может и от имени папки пользователя,
-    # и от слишком длинного пути — называем факты и обе частые причины
-    assert "как просили" in script
-    assert "кодировке системы" in script
-    assert "260 знаков" in script
+    assert "$link.Save()" in script
+    # ничего не удаляем и не перечитываем: разбирать последствия — значит
+    # рисковать чужим рабочим ярлыком
+    assert "Remove-Item" not in script
 
 
-def test_an_empty_shortcut_is_removed_but_a_working_one_is_kept():
-    """Убирать ярлык вправе только тот, кто видит, что в нём осталось.
+def test_other_systems_are_not_asked_about_windows_encodings():
+    """Вопрос про ANSI-кодировку осмысленен только на Windows."""
+    assert autostart.unrepresentable(r"C:\Users\トレイ\snapreel.exe") is None
 
-    Windows на неудачной перезаписи иногда сохраняет прежнюю, рабочую цель.
-    Снести такой ярлык значило бы отнять у человека уже работавший
-    автозапуск — поэтому решение принимает сам скрипт, а не питон снаружи.
-    """
-    script = autostart.windows_shortcut_script(
-        pathlib.Path(r"C:\Startup\Snapreel Tray.lnk"), argv=[r"C:\Program Files\snapreel.exe"]
-    )
 
-    assert "if ($saved.TargetPath) {" in script  # осталась прежняя цель — не трогаем
-    assert "Прежний ярлык не тронут" in script
-    assert "Remove-Item -LiteralPath" in script  # пусто — убираем
-    assert "ярлык убран" in script
+def test_cyrillic_passes_where_the_system_knows_it(monkeypatch):
+    """Русская Windows кириллицу принимает — отказывать ей незачем."""
+    monkeypatch.setattr(autostart, "_system_codec", lambda: "cp1251")
+
+    assert autostart.unrepresentable(r"C:\Users\Иван\snapreel.exe") is None
