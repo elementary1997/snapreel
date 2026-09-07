@@ -192,6 +192,49 @@ def test_no_recording_starts_over_the_settings_window(tray_app, monkeypatch):
     assert tray_app.notes == ["сначала закройте окно настроек"]
 
 
+def test_the_settings_window_stays_shut_during_a_recording(tray_app, monkeypatch):
+    """Окно модально: открытое поверх записи, оно отняло бы у рамки «Стоп» и Esc."""
+    seen = {}
+
+    def busy(as_gif):
+        seen["пункт"] = tray_app.item("settings").enabled
+        tray_app.app.open_settings()  # а если позвали мимо меню
+        seen["окно"] = tray_app.app.settings_open
+
+    monkeypatch.setattr(tray_app.app, "_record_clip", busy)
+    tray_app.app.record()
+
+    assert seen == {"пункт": False, "окно": False}
+    assert tray_app.notes == ["идёт запись — настройки откроются после неё"]
+    assert tray_app.item("settings").enabled
+
+
+def test_quitting_finishes_the_recording_instead_of_dropping_it(tray_app, monkeypatch):
+    """«Выйти» посреди записи не теряет клип и не бросает ffmpeg писать экран."""
+    stopped = []
+    packed = []
+
+    class FakeRecording:
+        def stop(self, timeout=20):
+            stopped.append(timeout)
+
+    def fake_start(config, **kwargs):
+        kwargs["on_started"](FakeRecording())
+        tray_app.app.quit()  # человек выбрал «Выйти», пока висит рамка
+        return "сессия"
+
+    monkeypatch.setattr("snapreel.recorder.start", fake_start)
+    monkeypatch.setattr("snapreel.recorder.finish", packed.append)
+    monkeypatch.setattr(tray_app.app, "unbind_hotkeys", lambda: None)
+    tray_app.app._record_clip = tray_app.app._record_here  # тут нужен настоящий путь
+
+    tray_app.app.record()
+    tray_app.app.join()
+
+    assert stopped, "ffmpeg остался писать экран"
+    assert packed == ["сессия"], "клип не упакован и не ушёл в буфер"
+
+
 def test_the_settings_window_takes_the_hotkeys_off(tray_app, monkeypatch):
     """Комбинацию в окне нажимают — глобальный слушатель принял бы это за запись."""
     bound = []
@@ -525,6 +568,38 @@ def test_quitting_stops_the_icon_and_the_hotkeys(tray_app):
 
     assert icon.stopped == 1
     assert stopped == [1]
+
+
+def test_the_tray_does_not_leave_before_the_packing_is_done(monkeypatch, tmp_path, need):
+    """Выход из меню не вправе оборвать упаковку: там клип уходит в буфер."""
+    need("PySide6")
+    from PySide6.QtWidgets import QApplication, QSystemTrayIcon
+
+    QApplication.instance() or QApplication([])
+    monkeypatch.setattr(QSystemTrayIcon, "isSystemTrayAvailable", staticmethod(lambda: True))
+    monkeypatch.setattr(tray.TrayApp, "bind_hotkeys", lambda self: None)
+    monkeypatch.setattr(tray.TrayApp, "watch_updates", lambda self: None)
+    monkeypatch.setattr(
+        "snapreel.qt.application", lambda config=None: (QApplication.instance(), False)
+    )
+    made: list = []
+    packed: list = []
+    monkeypatch.setattr(tray.TrayApp, "greet", lambda self: made.append(self))
+
+    def exec_(self):
+        """Пока крутился цикл, человек записал клип — упаковка ушла в фон."""
+
+        def pack():
+            time.sleep(0.3)
+            packed.append("в буфере")
+
+        made[0]._threads.append(tray._start(pack))
+        return 0
+
+    monkeypatch.setattr(QApplication, "exec", exec_)
+
+    assert tray.run(Config(), tmp_path / "c.toml", ENV) == 0
+    assert packed == ["в буфере"]
 
 
 def test_a_session_without_a_tray_is_explained(monkeypatch, capsys, tmp_path, need):

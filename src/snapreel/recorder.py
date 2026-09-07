@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -73,11 +74,15 @@ def start(
     as_gif: bool = False,
     indicator: bool = True,
     env: Environment | None = None,
+    on_started: Callable[[Recording], None] | None = None,
 ) -> Session:
     """Часть с окнами: выделение области, запись и рамка с таймером.
 
     Возвращается, когда запись остановлена — человеком, таймером или самим
     ffmpeg, — и на диске уже лежит файл.
+
+    `on_started` получает запущенную запись, пока рамка ещё висит: трею нужно
+    за что-то дёрнуть, если человек выбрал «Выйти» посреди записи.
     """
     env = env or detect()
     enable_dpi_awareness()
@@ -102,6 +107,8 @@ def start(
         video=video_path,
         as_gif=as_gif,
     )
+    if on_started is not None:
+        on_started(recording)
 
     try:
         widget_cls = _indicator_class() if indicator else None

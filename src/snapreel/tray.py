@@ -31,6 +31,9 @@ from .platform_info import Environment, detect
 # `updates.check` по своей отметке в updates.json.
 FIRST_CHECK = 60.0
 CHECK_TICK = 3600.0
+# сколько трей ждёт упаковку при выходе. Столько же занимает сборка GIF из
+# длинного клипа; бросить её значило бы потерять уже записанное
+PACKING_WAIT = 120.0
 
 
 @dataclass(frozen=True)
@@ -71,6 +74,7 @@ class TrayApp:
         self._record_clip = record_fn or self._record_here
         self._notify = notifier or (lambda title, message: notify.send(title, message, self.env))
         self._busy = False  # идёт запись — она живёт в этом же процессе
+        self._running = None  # запущенный ffmpeg, пока висит рамка
         self._window_open = False  # окно настроек открыто прямо здесь
         self._listener = None
         self._release: updates.Release | None = None
@@ -119,7 +123,14 @@ class TrayApp:
                 enabled=not busy,
             ),
             Item("sep_record", separator=True),
-            Item("settings", "Настройки…", self.open_settings, enabled=not self.settings_open),
+            Item(
+                "settings",
+                "Настройки…",
+                self.open_settings,
+                # окно модально на всё приложение: открытое поверх записи, оно
+                # отняло бы у рамки и «Стоп», и Esc
+                enabled=not self.settings_open and not busy,
+            ),
             Item(
                 "autostart",
                 "Запускать при входе в систему",
@@ -218,8 +229,18 @@ class TrayApp:
         """
         from . import recorder
 
-        session = recorder.start(self.config, as_gif=as_gif, env=self.env)
+        try:
+            session = recorder.start(
+                self.config, as_gif=as_gif, env=self.env, on_started=self._remember
+            )
+        finally:
+            # рамка закрылась: останавливать больше нечего
+            self._running = None
         return lambda: recorder.finish(session)
+
+    def _remember(self, recording) -> None:
+        """Запоминает идущую запись — за неё дёргает «Выйти»."""
+        self._running = recording
 
     def _on_main(self, job: Callable[[], None]) -> None:
         """Переносит работу в главный поток, если есть кому её передать."""
@@ -243,6 +264,11 @@ class TrayApp:
         оверлей поверх модального окна — без мыши и без Esc, то есть навсегда.
         """
         if self._window_open:
+            return
+        if self.recording:
+            # то же правило с другой стороны: пункт меню на время записи
+            # выключен, но позвать сюда могут и мимо меню
+            self._notify("snapreel", "идёт запись — настройки откроются после неё")
             return
         self._window_open = True
         self.unbind_hotkeys()
@@ -386,14 +412,29 @@ class TrayApp:
         self._notify("snapreel", "работает в трее — настройки в меню иконки")
 
     def quit(self) -> None:
+        """Гасит иконку, но не бросает начатое.
+
+        Начатая запись доводится до файла: ffmpeg просят закончить, а
+        упаковку трей доигрывает и дожидается (`run`). Иначе «Выйти»
+        посреди записи означало бы потерянный клип, а на wlroots — ещё и
+        оставшийся писать экран процесс, которого некому остановить: своего
+        ограничения по времени у `wf-recorder` нет.
+        """
         self._stopping.set()
         self.unbind_hotkeys()
+        recording, self._running = self._running, None
+        if recording is not None:
+            self._notify("snapreel", "заканчиваю запись — клип уйдёт в буфер обмена")
+            try:
+                recording.stop(timeout=20)
+            except Exception as exc:  # выход не отменяется из-за ffmpeg
+                print(f"snapreel: запись не остановилась — {exc}", file=sys.stderr)
         icon = self._icon
         if icon is not None:
             icon.stop()
 
     def join(self, timeout: float = 5.0) -> None:
-        """Ждёт фоновые потоки — нужно тестам и аккуратному выходу."""
+        """Ждёт фоновые потоки: в одном из них клип уходит в буфер обмена."""
         for thread in list(self._threads):
             thread.join(timeout)
 
@@ -522,6 +563,9 @@ def run(config: Config, path: Path | None = None, env: Environment | None = None
         qt_app.exec()
     finally:
         app.quit()
+        # упаковка идёт фоновым потоком, и выход не вправе её оборвать: там
+        # клип превращается в файл и уходит в буфер обмена
+        app.join(timeout=PACKING_WAIT)
     return 0
 
 
