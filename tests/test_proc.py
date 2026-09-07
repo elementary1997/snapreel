@@ -99,9 +99,29 @@ def test_a_powershell_failure_comes_back_as_words(monkeypatch):
     decoded = base64.b64decode(seen["command"][-1]).decode("utf-16-le")
     assert "$Error[0].Exception.Message" in decoded
     assert "exit 1" in decoded
-    # оборачивать в try нельзя: внутри него первая ошибка обрывает остаток
-    # блока, а скрипт уведомления на этом и держится
-    assert "try {" not in decoded
+
+
+def test_the_wrapping_does_not_touch_error_handling(monkeypatch):
+    """Обёртка не вправе менять то, как PowerShell обходится с ошибками.
+
+    Скрипт уведомления держится на том, что ошибка WinRT на `AppendChild`
+    обрывает свой оператор, но не остальные: до `.Show(...)` он всё равно
+    доходит. Любой способ сделать ошибку останавливающей — `try`, `trap`,
+    `$ErrorActionPreference = 'Stop'` — оставляет человека без уведомлений,
+    и проверено это на живом powershell, а не додумано.
+
+    Поэтому запрещается не одна запись, а весь класс: обёртка добавляет
+    кодировку и хвост, и ничего про обработку ошибок.
+    """
+    seen: dict = {}
+    monkeypatch.setattr(proc, "run", _catching(seen))
+
+    proc.powershell("$toast.Show()")
+
+    decoded = base64.b64decode(seen["command"][-1]).decode("utf-16-le").lower()
+    added = decoded.replace("$toast.show()", "")
+    for directive in ("try", "trap", "erroractionpreference", "-erroraction", "$erroractionpref"):
+        assert directive not in added, f"обёртка меняет обработку ошибок: {directive}"
 
 
 def test_console_words_are_decoded_even_before_our_encoding_takes_effect(monkeypatch):
@@ -155,7 +175,8 @@ def test_the_scripts_own_words_win():
 def test_the_package_calls_powershell_only_through_proc():
     """Забытый `-Command` вернул бы «?» вместо русских букв у человека."""
     root = Path(snapreel.__file__).parent
-    direct = re.compile(r'"powershell(\.exe)?"')  # и с расширением, и без
+    # и с расширением, и без, и в любых кавычках
+    direct = re.compile(r"""['"]powershell(\.exe)?['"]""")
     offenders = [
         f"{path.relative_to(root)}:{number}"
         for path in sorted(root.rglob("*.py"))
