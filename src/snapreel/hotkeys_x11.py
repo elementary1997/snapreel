@@ -153,12 +153,30 @@ class Listener:
         return catcher.get_error() is None
 
     def _release(self) -> None:
-        """Отпускает захваченное: закрытое соединение X разбирает само."""
+        """Отпускает захваченное — сразу, не дожидаясь закрытия соединения.
+
+        Полагаться на то, что сервер разберёт захваты сам, нельзя: клиента
+        он хоронит не в тот же миг, и следующий `start` (а трей делает его
+        сразу за снятием) натыкался на собственный прежний захват. На
+        загруженном раннере это стоило полсекунды с лишним — дольше, чем
+        мы вообще готовы ждать.
+        """
         display, self._display = self._display, None
-        if display is not None:
+        if display is None:
+            return
+        try:
+            root = display.screen().root
+            for code, mask in self._grabs:
+                for slop in _slop_masks():
+                    root.ungrab_key(code, mask | slop)
+            display.sync()
+        except Exception:  # соединения уже нет — отпускать нечего
+            pass
+        finally:
+            self._grabs = {}
             try:
                 display.close()
-            except Exception:  # соединения уже нет — тем более отпущено
+            except Exception:
                 pass
 
     def stop(self) -> None:

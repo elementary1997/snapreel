@@ -158,6 +158,23 @@ def test_the_probe_repeats_a_reason_it_already_knows():
     assert "Wayland" in hotkeys.probe(Config(), WAYLAND)
 
 
+def test_the_probe_never_starts_someone_elses_listener(monkeypatch, x_server):
+    """На macOS pynput без разрешения «Универсальный доступ» валит процесс.
+
+    `doctor` обязан работать в любом окружении, поэтому пробуем только свой
+    перехват X11 — там отказ и возможен, и безобиден.
+    """
+    x_server(record=True)  # RECORD на месте, значит наш перехват не нужен
+
+    def forbidden(config, handler, env=None):
+        raise AssertionError("проба не смеет поднимать чужой слушатель")
+
+    monkeypatch.setattr(hotkeys, "listen", forbidden)
+
+    assert hotkeys.probe(Config(), WINDOWS) is None
+    assert hotkeys.probe(Config(), X11) is None
+
+
 def test_a_machine_without_python_xlib_gets_our_own_error(monkeypatch):
     """Голый ModuleNotFoundError прошёл бы мимо `except HotkeyError` в трее.
 
