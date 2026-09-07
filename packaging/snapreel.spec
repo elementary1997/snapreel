@@ -23,6 +23,7 @@ hidden = [
     "snapreel.selector",
     "snapreel.indicator",
     "snapreel.tray",
+    "snapreel.hotkeys_x11",
 ]
 
 # pynput нужен хоткеям, PySide6 — окнам и трею. Наличие проверяется find_spec,
@@ -39,6 +40,11 @@ _PYNPUT = {
 
 if find_spec("pynput"):
     hidden += ["pynput", "pynput.keyboard", "pynput.mouse", *_PYNPUT]
+# python-xlib приезжает вместе с pynput, но нужен и сам по себе: на X-сервере
+# без расширения RECORD комбинации ловит наш XGrabKey, а он импортирует Xlib
+# внутри функций — из графа импортов этого не видно
+if sys.platform not in ("win32", "darwin") and find_spec("Xlib"):
+    hidden += ["Xlib", "Xlib.display", "Xlib.X", "Xlib.XK", "Xlib.error", "Xlib.ext"]
 if find_spec("PySide6"):
     hidden += ["PySide6.QtCore", "PySide6.QtGui", "PySide6.QtWidgets"]
 

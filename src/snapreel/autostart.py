@@ -257,13 +257,15 @@ def format_gsettings_list(paths: list[str]) -> str:
 
 
 def _gnome_install(hotkey: str) -> Outcome:
-    if os.environ.get("XDG_CURRENT_DESKTOP", "").upper().find("GNOME") < 0 and not shutil.which(
-        "gsettings"
-    ):
+    if not _gnome_here():
+        # проверять надо всё: `gsettings` стоит и там, где GNOME нет вовсе,
+        # и тогда мы лезли в несуществующую схему, а человек получал
+        # «Схема ... отсутствует» вместо объяснения
         return Outcome(
             False,
-            "автоматически хоткей ставится только в GNOME. В других окружениях "
-            f"назначьте комбинацию на команду: {quote(launch_argv())}",
+            "в системе комбинация назначается только в GNOME, а это не он. "
+            "Её слушает сама иконка в трее; чтобы работало и без неё, "
+            f"назначьте средствами рабочего стола команду: {quote(launch_argv())}",
         )
     binding = to_gnome(hotkey)
     existing = parse_gsettings_list(_gsettings("get", GNOME_SCHEMA, "custom-keybindings"))
@@ -275,6 +277,27 @@ def _gnome_install(hotkey: str) -> Outcome:
     _gsettings("set", schema, "command", quote(launch_argv()))
     _gsettings("set", schema, "binding", binding)
     return Outcome(True, f"хоткей {binding} назначен в GNOME")
+
+
+def _gnome_here() -> bool:
+    """Есть ли тут GNOME с его схемой медиа-клавиш.
+
+    Спрашиваем саму схему: имя рабочего стола в разных сборках пишут
+    по-разному, а `gsettings` встречается и там, где GNOME нет.
+    """
+    if not shutil.which("gsettings"):
+        return False
+    try:
+        result = proc.run(
+            ["gsettings", "list-schemas"],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and GNOME_SCHEMA in result.stdout.split()
 
 
 def _gnome_remove() -> Outcome:

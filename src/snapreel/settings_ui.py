@@ -45,6 +45,7 @@ CONTROL_WIDTH = 230
 HOTKEY_WIDTH = 300  # комбинация и кнопка «Изменить» в одну строку
 SIDEBAR_WIDTH = 170
 UPDATE_GROUP = "Обновление"
+HOTKEY_GROUP = "Горячие клавиши"
 
 # Модификаторы приходят отдельными событиями и сами по себе комбинацией не
 # являются: ждём, пока нажмут что-то ещё.
@@ -493,6 +494,10 @@ class SettingsWindow(QDialog):
                 column.addWidget(_divider())
             column.addWidget(self._row(field, values[field.name]))
 
+        if group.title == HOTKEY_GROUP:
+            column.addWidget(_divider())
+            column.addWidget(_hotkey_status())
+
         if group.title == UPDATE_GROUP:
             column.addWidget(_divider())
             self.updates = UpdatePanel(self.path, self.palette)
@@ -619,6 +624,31 @@ def _restyle(label: QLabel, role: str, text: str) -> None:
     label.setText(text)
     label.style().unpolish(label)
     label.style().polish(label)
+
+
+def _hotkey_status() -> QLabel:
+    """Строка о том, слышны ли комбинации в этой сессии, и почему нет.
+
+    Раньше причина уходила в `stderr`, которого у оконной сборки нет: человек
+    видел лишь то, что ни одна комбинация не работает, и объяснить это было
+    некому. Спрашивать разрешено любое окружение — ответ считается быстро и
+    ничего не запускает.
+    """
+    from . import hotkeys
+
+    try:
+        refusal = hotkeys.why_silent()
+    except Exception as exc:  # окно настроек не падает из-за подсказки
+        refusal = f"не проверить: {exc}"
+
+    label = QLabel()
+    label.setWordWrap(True)
+    label.setContentsMargins(0, GAP, 0, 0)
+    if refusal is None:
+        _restyle(label, "ok", "Комбинации слушает иконка в трее — назначать их в системе не нужно.")
+    else:
+        _restyle(label, "error", refusal)
+    return label
 
 
 def _divider() -> QFrame:

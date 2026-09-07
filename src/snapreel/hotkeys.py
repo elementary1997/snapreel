@@ -1,8 +1,16 @@
-"""Демон с глобальным хоткеем.
+"""Глобальные комбинации: кто их ловит и почему иногда не ловит никто.
 
 Работает на Windows, X11 и macOS (последней нужно разрешение «Универсальный
 доступ»). В Wayland глобальный перехват клавиш композитором запрещён — там
 вешайте `snapreel record` на системный хоткей окружения.
+
+Ловцов два. Обычно это pynput, но он слушает X11 через расширение RECORD, а
+оно есть не везде: без него поток pynput умирает молча, и человек видит лишь
+то, что ни одна комбинация не работает. Поэтому на таком сервере в дело идёт
+`hotkeys_x11` — штатный `XGrabKey`, которому RECORD не нужен.
+
+Почему в этой сессии комбинаций не будет, отвечает `why_silent`: этот ответ
+показывают окно настроек и `doctor`, а не только `stderr`.
 """
 
 from __future__ import annotations
@@ -10,6 +18,7 @@ from __future__ import annotations
 import queue
 import sys
 from collections.abc import Callable
+from importlib import util
 
 from .config import Config
 from .platform_info import Environment, Platform, detect
@@ -17,6 +26,89 @@ from .platform_info import Environment, Platform, detect
 
 class HotkeyError(RuntimeError):
     pass
+
+
+def why_silent(env: Environment | None = None) -> str | None:
+    """Почему комбинации не будут слышны в этой сессии. `None` — будут.
+
+    Отдельная функция, потому что ответ нужен не только при запуске: окно
+    настроек и `doctor` обязаны сказать это человеку словами. Раньше причина
+    уходила в `stderr`, которого у оконной сборки нет, и «не работает ни один
+    хоткей» выглядело беспричинным.
+    """
+    env = env or detect()
+    if env.platform is Platform.LINUX_WAYLAND and not env.is_wsl:
+        # композитор глобальных клавиш приложению не отдаёт, и обойти это
+        # нечем: XWayland видит только собственные окна
+        return (
+            "В Wayland глобальные комбинации приложению не отдаются. Назначьте "
+            "команду «snapreel record» на комбинацию средствами рабочего стола — "
+            "иконку в трее при этом можно не закрывать."
+        )
+    if util.find_spec("pynput") is None and not _grab_possible(env):
+        return "Нет pynput — ставится командой pip install 'snapreel[ui]'."
+    if env.is_linux and not _grab_possible(env) and _record_missing():
+        return (
+            "X-сервер без расширения RECORD, а перехватить клавиши напрямую не "
+            "вышло. Назначьте команду «snapreel record» на комбинацию средствами "
+            "рабочего стола."
+        )
+    return None
+
+
+def mechanism(env: Environment | None = None) -> str:
+    """Чем именно ловятся нажатия — для `doctor` и окна настроек."""
+    env = env or detect()
+    if why_silent(env) is not None:
+        return "не слушаются"
+    return "перехват X11" if _needs_grab(env) else "pynput"
+
+
+def _needs_grab(env: Environment) -> bool:
+    """На X11 без RECORD слушатель pynput умирает молча — ловим сами.
+
+    Расширение есть почти везде, и трогать проверенный путь без нужды
+    незачем: свой перехват включается ровно там, где чужой не работает.
+    """
+    if not env.is_linux:
+        return False
+    if util.find_spec("pynput") is None:
+        return _grab_possible(env)
+    return _record_missing() and _grab_possible(env)
+
+
+def _record_missing() -> bool:
+    """`True` — точно нет; «не знаем» считается «есть»: pynput провереннее."""
+    from . import hotkeys_x11
+
+    return hotkeys_x11.has_record() is False
+
+
+def _grab_possible(env: Environment) -> bool:
+    if not env.is_linux:
+        return False
+    try:
+        from . import hotkeys_x11
+
+        return hotkeys_x11.available()
+    except Exception:  # нет python-xlib — значит и перехватывать нечем
+        return False
+
+
+def _grab(config: Config, handler: Callable[[bool], None]):
+    from . import hotkeys_x11
+
+    listener = hotkeys_x11.Listener(
+        {
+            config.hotkey_mp4: lambda: handler(False),
+            config.hotkey_gif: lambda: handler(True),
+        }
+    )
+    try:
+        listener.start()
+    except hotkeys_x11.GrabError as exc:
+        raise HotkeyError(str(exc)) from exc
+    return listener
 
 
 def listen(config: Config, handler: Callable[[bool], None], env: Environment | None = None):
@@ -27,15 +119,17 @@ def listen(config: Config, handler: Callable[[bool], None], env: Environment | N
     (`TrayApp._on_main`). Кому нужен главный поток целиком, тому `run`.
     """
     env = env or detect()
-    if env.platform is Platform.LINUX_WAYLAND:
-        raise HotkeyError(
-            "в Wayland глобальные хоткеи перехватить нельзя. Назначьте "
-            "`snapreel record` на комбинацию в настройках окружения."
-        )
+    refusal = why_silent(env)
+    if refusal is not None:
+        raise HotkeyError(refusal)
+
+    if _needs_grab(env):
+        return _grab(config, handler)
+
     try:
         from pynput import keyboard
     except ImportError as exc:
-        raise HotkeyError("нужен pynput: pip install 'snapreel[daemon]'") from exc
+        raise HotkeyError("нужен pynput: pip install 'snapreel[ui]'") from exc
 
     try:
         listener = keyboard.GlobalHotKeys(
@@ -64,7 +158,7 @@ def listen(config: Config, handler: Callable[[bool], None], env: Environment | N
 def run(config: Config, handler: Callable[[bool], None], env: Environment | None = None) -> int:
     """Слушает хоткеи и вызывает `handler(as_gif)` в главном потоке.
 
-    Tk обязан жить в главном потоке, поэтому слушатель pynput только кладёт
+    Окна обязаны жить в главном потоке, поэтому слушатель только кладёт
     заявку в очередь, а запись запускается здесь.
     """
     requests: queue.Queue[bool] = queue.Queue()

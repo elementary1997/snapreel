@@ -51,7 +51,7 @@ graph TD
     plat[platform_info.py<br/>детект платформы, DPI, границы экрана]
     deps[deps.py<br/>системные зависимости]
     auto[autostart.py<br/>системный хоткей]
-    daemon[hotkeys.py<br/>демон pynput]
+    daemon[hotkeys.py<br/>комбинации: pynput или XGrabKey]
     tray[tray.py<br/>иконка, меню, автозапуск · Qt]
     upd[updates.py<br/>github releases]
 
