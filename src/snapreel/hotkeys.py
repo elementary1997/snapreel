@@ -150,8 +150,13 @@ def listen(config: Config, handler: Callable[[bool], None], env: Environment | N
 
     try:
         from pynput import keyboard
-    except ImportError as exc:
+    except ModuleNotFoundError as exc:
         raise HotkeyError("нужен pynput: pip install 'snapreel[ui]'") from exc
+    except ImportError as exc:
+        # pynput подключается к оконной системе прямо на импорте и о неудаче
+        # сообщает обычным ImportError. «Пакета нет» тут было бы враньём —
+        # он есть, и `doctor` двумя строками выше сам это написал
+        raise HotkeyError(f"pynput не поднялся: {exc}") from exc
 
     try:
         listener = keyboard.GlobalHotKeys(

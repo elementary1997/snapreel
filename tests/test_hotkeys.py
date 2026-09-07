@@ -158,6 +158,31 @@ def test_the_probe_repeats_a_reason_it_already_knows():
     assert "Wayland" in hotkeys.probe(Config(), WAYLAND)
 
 
+def test_a_broken_pynput_is_not_called_a_missing_one(monkeypatch, x_server):
+    """pynput сообщает о неудаче подключения к X обычным ImportError.
+
+    Назвать это «поставьте пакет» значило бы отправить человека ставить то,
+    что у него уже стоит, — `doctor` строкой выше сам пишет «pynput есть».
+    """
+    x_server(record=True)  # RECORD на месте, значит идём путём pynput
+    import builtins
+
+    real_import = builtins.__import__
+
+    def refuse(name, *args, **kwargs):
+        if name == "pynput":
+            raise ImportError("failed to acquire X connection")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse)
+
+    with pytest.raises(hotkeys.HotkeyError) as failure:
+        hotkeys.listen(Config(), lambda as_gif: None, X11)
+
+    assert "failed to acquire X connection" in str(failure.value)
+    assert "pip install" not in str(failure.value)
+
+
 def test_the_locks_do_not_break_a_combination():
     """Num Lock и Caps Lock живут в тех же битах, что и модификаторы.
 
