@@ -350,10 +350,16 @@ def windows_shortcut_script(
 
 
 def _powershell(script: str) -> None:
-    """Скрипт уходит файлом: в именах ярлыков есть кириллица (см. `proc`)."""
+    """Скрипт уходит кодированным: в именах ярлыков есть кириллица (см. `proc`).
+
+    Причину отказа ищем и на стандартном выводе: обёртка в `proc` печатает
+    её туда сама, потому что поток ошибок PowerShell в этом режиме отдаёт
+    XML, а не текст.
+    """
     result = proc.powershell(script)
     if result.returncode != 0:
-        raise HotkeySetupError(result.stderr.strip() or "powershell вернул ошибку")
+        explanation = result.stdout.strip() or result.stderr.strip()
+        raise HotkeySetupError(explanation or "powershell вернул ошибку")
 
 
 def _windows_install(hotkey: str) -> Outcome:

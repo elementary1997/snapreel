@@ -484,7 +484,9 @@ def test_external_output_is_decoded_leniently():
     import re
 
     package = pathlib.Path(encode.__file__).parent
-    strict = re.compile(r"text=True(?!\s*,\s*errors=)")
+    # между `text=True` и `errors=` бывает `encoding=`: кодировку иногда
+    # приходится задавать явно, и это не повод считать вызов строгим
+    strict = re.compile(r"text=True(?!\s*,\s*(encoding=[^,]+,\s*)?errors=)")
     offenders = [
         f"{path.relative_to(package)}:{source[: match.start()].count(chr(10)) + 1}"
         for path in sorted(package.rglob("*.py"))

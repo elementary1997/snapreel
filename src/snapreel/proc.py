@@ -47,6 +47,21 @@ def _merged(kwargs: dict[str, Any]) -> dict[str, Any]:
     return {**kwargs, **options}
 
 
+# Обёртка вокруг каждого скрипта: `-EncodedCommand` заставляет powershell
+# сериализовать поток ошибок в CLIXML, и человеку вместо «Не удаётся
+# сохранить ярлык …» приезжает страница XML. Поэтому ошибку ловим сами и
+# печатаем её текстом, а кодировку вывода задаём явно — иначе русские буквы
+# вернутся искажёнными уже на обратном пути.
+_WRAPPER = """[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$ErrorActionPreference = 'Stop'
+try {{
+{script}
+}} catch {{
+    [Console]::Out.WriteLine($_.Exception.Message)
+    exit 1
+}}"""
+
+
 def powershell(script: str, timeout: float = 60) -> subprocess.CompletedProcess:
     """Выполняет скрипт PowerShell, передавая его в кодировке, а не как текст.
 
@@ -59,19 +74,25 @@ def powershell(script: str, timeout: float = 60) -> subprocess.CompletedProcess:
 
     `-EncodedCommand` берёт тот же скрипт в base64 от UTF-16LE: по командной
     строке едет один ASCII, а PowerShell разбирает его обратно сам. Файлом
-    отдавать нельзя, хоть это и напрашивается: у `-File` другой код возврата
-    — при ошибке внутри скрипта он остаётся нулевым, и сорвавшаяся запись
-    ярлыка выглядела бы успехом; плюс запуск файла упирается в политику
-    выполнения скриптов, которую групповая политика может запретить совсем.
+    отдавать нельзя, хоть это и напрашивается: у `-File` при ошибке внутри
+    скрипта код возврата остаётся нулевым (проверено на живом powershell
+    5.1), и сорвавшаяся запись ярлыка выглядела бы успехом; плюс запуск
+    файла упирается в политику выполнения скриптов, которую групповая
+    политика может запретить совсем.
 
-    Ограничение — длина командной строки (около 32 тысяч знаков): скрипты
-    здесь на порядки короче, но бесконечно длинный так не передать.
+    Причина отказа возвращается на стандартном выводе — см. `_WRAPPER`.
+
+    Ограничение — длина командной строки (около 32 тысяч знаков): самый
+    длинный скрипт проекта даёт 1,7 тысячи, но бесконечно длинный так не
+    передать.
     """
-    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    wrapped = _WRAPPER.format(script=script)
+    encoded = base64.b64encode(wrapped.encode("utf-16-le")).decode("ascii")
     return run(
         ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         errors="replace",
         timeout=timeout,
     )

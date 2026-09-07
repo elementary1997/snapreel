@@ -72,7 +72,25 @@ def test_a_powershell_script_keeps_its_cyrillic(monkeypatch):
     assert "-EncodedCommand" in command
     assert command[-1].isascii(), "по командной строке обязан ехать только ASCII"
     decoded = base64.b64decode(command[-1]).decode("utf-16-le")
-    assert decoded == "$link.Description = 'Snapreel — запись в буфер'"
+    assert "$link.Description = 'Snapreel — запись в буфер'" in decoded
+
+
+def test_a_powershell_failure_comes_back_as_words(monkeypatch):
+    """В этом режиме PowerShell отдаёт поток ошибок как XML, а не как текст.
+
+    Человек увидел бы страницу `<Objs Version=…>` вместо «Не удаётся
+    сохранить ярлык …», поэтому ошибку ловит сама обёртка и печатает её
+    обычным выводом.
+    """
+    seen: dict = {}
+    monkeypatch.setattr(proc, "run", lambda command, **kwargs: seen.update(command=list(command)))
+
+    proc.powershell("$s.Save()")
+
+    decoded = base64.b64decode(seen["command"][-1]).decode("utf-16-le")
+    assert "try {" in decoded and "catch {" in decoded
+    assert "$_.Exception.Message" in decoded
+    assert "exit 1" in decoded
 
 
 def test_a_powershell_script_does_not_go_as_a_file(monkeypatch):
@@ -95,7 +113,7 @@ def test_a_powershell_script_does_not_go_as_a_file(monkeypatch):
 def test_the_package_calls_powershell_only_through_proc():
     """Забытый `-Command` вернул бы «?» вместо русских букв у человека."""
     root = Path(snapreel.__file__).parent
-    direct = re.compile(r'"powershell"')
+    direct = re.compile(r'"powershell(\.exe)?"')  # и с расширением, и без
     offenders = [
         f"{path.relative_to(root)}:{number}"
         for path in sorted(root.rglob("*.py"))
