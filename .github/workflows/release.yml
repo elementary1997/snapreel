@@ -188,6 +188,79 @@ jobs:
             *) echo "без дисплея бинарник не объяснил, почему окна нет"; exit 1;;
           esac
 
+      - name: Record and paste on the runner's own desktop
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          # У macOS и Windows раннеров есть настоящий рабочий стол, и это
+          # единственное место, где запись и буфер обмена этих систем
+          # проверяются целиком. Окон при этом не открывается: геометрия
+          # задана флагом, рамка выключена — иначе задание ждало бы человека.
+          bin="./dist/snapreel${{ runner.os == 'Windows' && '.exe' || '' }}"
+          clips="$RUNNER_TEMP/acceptance"
+          mkdir -p "$clips"
+          "$bin" config > "$RUNNER_TEMP/acc-config.toml"
+
+          set +e
+          out="$("$bin" --config "$RUNNER_TEMP/acc-config.toml" record \
+            --region 320x240+0+0 --seconds 2 --min-seconds 0 --no-indicator \
+            --output-dir "$clips" 2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$out"
+
+          case "$out" in
+            *Traceback*) echo "трейсбек вместо сообщения пользователю"; exit 1;;
+          esac
+
+          if [ "$code" = "0" ]; then
+            echo "запись прошла — проверяем, что в буфере лежит файл"
+            ls -l "$clips"
+            test -s "$clips"/*.mp4
+          else
+            # На macOS запись экрана требует разрешения, которого у раннера
+            # нет: отказ тут ожидаем, а вот трейсбек или молчание — нет
+            echo "запись отказала с кодом $code — проверяем, что отказ объяснён"
+            case "$out" in
+              "") echo "отказ без единого слова"; exit 1;;
+            esac
+          fi
+
+      - name: The clipboard really holds a file (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          # Ради этого всё и затевалось: «вставляется файлом, а не путём».
+          # Спрашиваем у самой Windows, что лежит в буфере после записи —
+          # CF_HDROP она отдаёт как FileDropList
+          clips="$RUNNER_TEMP/acceptance"
+          if ! ls "$clips"/*.mp4 >/dev/null 2>&1; then
+            echo "записи не было — проверять буфер нечего"; exit 0
+          fi
+          list="$(powershell -NoProfile -Command \
+            "Get-Clipboard -Format FileDropList | ForEach-Object { \$_.FullName }")"
+          printf '%s\n' "$list"
+          case "$list" in
+            *.mp4) ;;
+            *) echo "в буфере нет файла — вставится не клип"; exit 1;;
+          esac
+
+      - name: Autostart goes in and comes back out (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          # Ярлык в автозагрузке — обычный файл, окон не открывает.
+          # Проверяем обе стороны: то, что прописано, обязано сниматься
+          bin="./dist/snapreel.exe"
+          "$bin" autostart
+          startup="$APPDATA/Microsoft/Windows/Start Menu/Programs/Startup"
+          ls "$startup"
+          ls "$startup" | grep -qi snapreel || { echo "ярлык автозапуска не появился"; exit 1; }
+          "$bin" autostart --remove
+          if ls "$startup" | grep -qi snapreel; then
+            echo "ярлык автозапуска не убрался"; exit 1
+          fi
+
       - name: Record a clip with the bundled ffmpeg
         if: runner.os == 'Linux'
         env:

@@ -314,3 +314,49 @@ def test_closing_the_window_waits_for_the_audio_thread(window):
     window.close()
 
     assert not field._thread.isRunning()
+
+
+# --- то, что человек читает после сохранения -------------------------------
+
+
+def refusing(message: str):
+    """Подмена `autostart.install`, которая отказывается назначить комбинацию."""
+    from snapreel.autostart import HotkeySetupError
+
+    def refuse(combination: str):
+        raise HotkeySetupError(message)
+
+    return refuse
+
+
+def test_a_saved_hotkey_says_one_line_when_the_tray_listens(window, monkeypatch):
+    """Длинный совет про рабочий стол нужен только там, где слушать некому.
+
+    В окне он занимал три строки под кнопками и пугал на ровном месте: на
+    любом не-GNOME рабочем столе система комбинацию не принимает, а иконка в
+    трее её слушает — и всё работает.
+    """
+    monkeypatch.setattr("snapreel.autostart.install", refusing("а это не GNOME"))
+    monkeypatch.setattr("snapreel.hotkeys.why_silent", lambda env=None: None)
+
+    assert window._apply_hotkey(window.config) == "комбинации слушает иконка в трее"
+
+
+def test_a_saved_hotkey_explains_itself_when_nobody_listens(window, monkeypatch):
+    monkeypatch.setattr(
+        "snapreel.autostart.install",
+        refusing("назначьте средствами рабочего стола команду: snapreel record"),
+    )
+    monkeypatch.setattr("snapreel.hotkeys.why_silent", lambda env=None: "в Wayland нельзя")
+
+    assert "средствами рабочего стола" in window._apply_hotkey(window.config)
+
+
+def test_the_theme_is_offered_in_words():
+    """`auto`, `dark`, `light` — это для конфига, а не для человека."""
+    from snapreel import settings
+
+    theme = next(field for field in settings.FIELDS if field.name == "theme")
+
+    assert dict(theme.labels)["auto"] == "Как в системе"
+    assert set(dict(theme.labels)) == set(theme.choices)

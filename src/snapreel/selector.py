@@ -127,7 +127,12 @@ def _overlay_class():
 
         def _draw_size(self, painter, box) -> None:
             ratio = 1 if self.env.platform is Platform.MACOS else self.devicePixelRatio()
-            text = f"{round(box.width() * ratio)}×{round(box.height() * ratio)}"
+            width = round(box.width() * ratio)
+            height = round(box.height() * ratio)
+            # показываем то, что будет записано: у кадра стороны чётные
+            # (libx264 с yuv420p нечётных не берёт), и обещать 501×401,
+            # получая 500×400, значит врать в единственном числе на экране
+            text = f"{width - width % 2}×{height - height % 2}"
             font = QFont(self.font())
             font.setPointSize(11)
             font.setBold(True)

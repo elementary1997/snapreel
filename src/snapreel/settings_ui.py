@@ -601,18 +601,33 @@ class SettingsWindow(QDialog):
 
         self.config = config
         self.saved = True
-        self._tell(f"Сохранено. {self._apply_hotkey(config)}", ok=True)
+        # тире, а не точка: продолжение приходит из `autostart` и `hotkeys`
+        # строчной буквой, и «Сохранено. комбинации слушает…» читается как
+        # оборванная фраза
+        self._tell(f"Сохранено — {self._apply_hotkey(config)}", ok=True)
 
     def _apply_hotkey(self, config: Config) -> str:
         """Хоткей регистрируется системой и не везде автоматически.
 
-        Отказ регистрации — не беда: пока открыт трей, комбинации слушает сам
-        snapreel. Поэтому и говорим об этом спокойно, а не как об ошибке.
+        Отказ регистрации — не беда, пока комбинации слушает сама иконка: об
+        этом и говорим, одной строкой. Длинный совет «назначьте средствами
+        рабочего стола вот такую команду» нужен только там, где слушать их
+        некому, — в Wayland; в остальных случаях он занимал три строки под
+        кнопками и пугал на ровном месте.
         """
+        from . import hotkeys
+
         try:
-            return autostart.install(config.hotkey_mp4).message
+            outcome = autostart.install(config.hotkey_mp4)
         except autostart.HotkeySetupError as exc:
-            return str(exc)
+            outcome = autostart.Outcome(False, str(exc))
+        if outcome.ok:
+            return outcome.message
+        try:
+            listened = hotkeys.why_silent() is None
+        except Exception:  # подсказка не повод ронять сохранение
+            listened = False
+        return "комбинации слушает иконка в трее" if listened else outcome.message
 
     def _tell(self, text: str, ok: bool = False, bad: bool = False) -> None:
         _restyle(self.status, "ok" if ok else "error" if bad else "hint", text)
