@@ -350,13 +350,8 @@ def windows_shortcut_script(
 
 
 def _powershell(script: str) -> None:
-    result = proc.run(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-        capture_output=True,
-        text=True,
-        errors="replace",
-        timeout=60,
-    )
+    """Скрипт уходит файлом: в именах ярлыков есть кириллица (см. `proc`)."""
+    result = proc.powershell(script)
     if result.returncode != 0:
         raise HotkeySetupError(result.stderr.strip() or "powershell вернул ошибку")
 

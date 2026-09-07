@@ -48,11 +48,9 @@ def _windows(title: str, message: str) -> None:
         "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('snapreel')"
         ".Show([Windows.UI.Notifications.ToastNotification]::new($t))"
     )
-    proc.run(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-        capture_output=True,
-        timeout=15,
-    )
+    # текст уведомления русский, и командной строкой он до PowerShell не
+    # доезжает: на английской Windows кириллица станет «?» (см. `proc`)
+    proc.powershell(script, timeout=15)
 
 
 def _escape(text: str) -> str:

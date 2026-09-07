@@ -14,7 +14,9 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
+import tempfile
 from collections.abc import Sequence
 from typing import Any
 
@@ -44,3 +46,46 @@ def _merged(kwargs: dict[str, Any]) -> dict[str, Any]:
     elif flags:
         options["creationflags"] = flags
     return {**kwargs, **options}
+
+
+def powershell(script: str, timeout: float = 60) -> subprocess.CompletedProcess:
+    """Выполняет скрипт PowerShell, передавая его файлом, а не строкой.
+
+    Через `-Command` скрипт уезжает командной строкой, а её PowerShell читает
+    в кодировке ANSI системы: на английской Windows кириллица превращается в
+    «?». Это не косметика — в имени ярлыка автозапуска есть русское слово, а
+    «?» Windows в именах файлов не разрешает, и автозапуск просто не
+    прописывался: `Unable to save shortcut ... (????).lnk`. Нашлось приёмкой
+    на раннере, где система английская; на русской машине всё работало.
+
+    Файл пишется с меткой UTF-8 (BOM) — по ней PowerShell 5.1 узнаёт
+    кодировку без всяких настроек, а `-ExecutionPolicy Bypass` нужен затем,
+    что политика по умолчанию неподписанные файлы запускать не даёт.
+    """
+    handle = tempfile.NamedTemporaryFile(
+        "w", suffix=".ps1", encoding="utf-8-sig", delete=False, newline="\r\n"
+    )
+    try:
+        handle.write(script)
+        handle.close()
+        return run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                handle.name,
+            ],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=timeout,
+        )
+    finally:
+        handle.close()
+        try:
+            os.unlink(handle.name)
+        except OSError:
+            pass  # файл во временном каталоге — уберёт система
