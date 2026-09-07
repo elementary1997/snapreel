@@ -183,7 +183,7 @@ def test_no_recording_starts_over_the_settings_window(tray_app, monkeypatch):
     """Окно настроек модально: оверлей поверх него не получил бы ни мыши, ни Esc."""
     monkeypatch.setattr(
         "snapreel.settings_ui.open_settings",
-        lambda config, path=None: tray_app.app.record(),
+        lambda config, path=None, hotkey_note=None: tray_app.app.record(),
     )
 
     tray_app.app.open_settings()
@@ -233,6 +233,7 @@ def test_quitting_finishes_the_recording_instead_of_dropping_it(tray_app, monkey
 
     assert stopped, "ffmpeg остался писать экран"
     assert packed == ["сессия"], "клип не упакован и не ушёл в буфер"
+    assert not tray_app.app._threads[-1].daemon, "упаковку нельзя обрывать выходом"
 
 
 def test_the_settings_window_takes_the_hotkeys_off(tray_app, monkeypatch):
@@ -242,7 +243,7 @@ def test_the_settings_window_takes_the_hotkeys_off(tray_app, monkeypatch):
     monkeypatch.setattr(tray_app.app, "unbind_hotkeys", lambda: bound.append("off"))
     monkeypatch.setattr(
         "snapreel.settings_ui.open_settings",
-        lambda config, path=None: bound.append("окно"),
+        lambda config, path=None, hotkey_note=None: bound.append("окно"),
     )
 
     tray_app.app.open_settings()
@@ -318,7 +319,8 @@ def test_settings_open_in_the_same_process(tray_app, monkeypatch):
     """Окно живёт в цикле событий трея: у Qt он один на всё приложение."""
     opened = []
     monkeypatch.setattr(
-        "snapreel.settings_ui.open_settings", lambda config, path=None: opened.append(path) or True
+        "snapreel.settings_ui.open_settings",
+        lambda config, path=None, hotkey_note=None: opened.append(path) or True,
     )
 
     tray_app.app.open_settings()
@@ -331,7 +333,7 @@ def test_a_second_settings_window_does_not_open(tray_app, monkeypatch):
     """Пункт меню выключен, пока окно открыто, и второе окно не заводится."""
     seen = []
 
-    def once(config, path=None):
+    def once(config, path=None, hotkey_note=None):
         seen.append(tray_app.item("settings").enabled)  # каким пункт виден изнутри
         tray_app.app.open_settings()  # повторное нажатие, пока окно открыто
         return True
@@ -345,7 +347,7 @@ def test_a_second_settings_window_does_not_open(tray_app, monkeypatch):
 
 
 def test_a_broken_settings_window_does_not_take_down_the_tray(tray_app, monkeypatch):
-    def explode(config, path=None):
+    def explode(config, path=None, hotkey_note=None):
         raise RuntimeError("окно не собралось")
 
     monkeypatch.setattr("snapreel.settings_ui.open_settings", explode)
@@ -593,7 +595,7 @@ def test_the_tray_does_not_leave_before_the_packing_is_done(monkeypatch, tmp_pat
             time.sleep(0.3)
             packed.append("в буфере")
 
-        made[0]._threads.append(tray._start(pack))
+        made[0]._threads.append(tray._start(pack, daemon=False))
         return 0
 
     monkeypatch.setattr(QApplication, "exec", exec_)
@@ -652,6 +654,36 @@ def test_the_cli_explains_a_missing_tray(monkeypatch, capsys, tmp_path):
     printed = capsys.readouterr().err
     assert "нет PySide6" in printed
     assert "daemon" in printed
+
+
+def test_a_refused_binding_reaches_the_person(tray_app, monkeypatch):
+    """Молча не встать нельзя: человек решит, что хоткеи просто не работают."""
+    from snapreel.hotkeys import HotkeyError
+
+    def refuse(config, handler, env=None):
+        raise HotkeyError("комбинацию уже кто-то держит")
+
+    monkeypatch.setattr("snapreel.hotkeys.listen", refuse)
+
+    # фикстура подменяет `bind_hotkeys` заглушкой — здесь нужен настоящий
+    tray.TrayApp.bind_hotkeys(tray_app.app)
+
+    assert "комбинации не работают" in tray_app.notes[0]
+    assert tray_app.app.hotkey_problem == "комбинацию уже кто-то держит"
+
+
+def test_the_settings_window_hears_about_that_refusal(tray_app, monkeypatch):
+    """Окно открывает трей, и он знает про привязку точнее любой проверки."""
+    seen = {}
+    monkeypatch.setattr(
+        "snapreel.settings_ui.open_settings",
+        lambda config, path=None, hotkey_note=None: seen.setdefault("нота", hotkey_note),
+    )
+    tray_app.app._hotkey_problem = "комбинацию уже кто-то держит"
+
+    tray_app.app.open_settings()
+
+    assert seen["нота"] == "комбинацию уже кто-то держит"
 
 
 def test_a_broken_hotkey_in_the_config_does_not_take_down_the_tray(monkeypatch, capsys, tmp_path):

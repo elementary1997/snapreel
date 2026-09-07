@@ -11,7 +11,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
 from . import autostart
-from .config import Config
+from .config import CLIPBOARD_MODES, Config
 
 # Пресеты x264 от самого быстрого к самому плотному.
 THEMES = ("auto", "dark", "light")
@@ -35,6 +35,9 @@ class Field:
     kind: str  # hotkey | int | float | bool | text | dir | choice
     hint: str = ""
     choices: tuple[str, ...] = ()
+    # подписи для выбора: в конфиге живёт короткое имя, человеку показывается
+    # то, что он в нём поймёт
+    labels: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -108,7 +111,14 @@ GROUPS: tuple[Group, ...] = (
     Group(
         "Прочее",
         (
-            Field("copy_path_as_text", "Копировать путь вместо файла", "bool"),
+            Field(
+                "clipboard",
+                "Класть в буфер обмена",
+                "choice",
+                "файл вставится вложением там, где вложения принимают",
+                choices=CLIPBOARD_MODES,
+                labels=(("file", "Видеофайл"), ("path", "Путь текстом")),
+            ),
             Field("notify", "Показывать уведомления", "bool"),
             Field(
                 "theme",

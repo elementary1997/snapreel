@@ -94,7 +94,9 @@ def wired(monkeypatch, tmp_path):
     monkeypatch.setattr(recorder.notify, "send", lambda *a, **k: None)
     monkeypatch.setattr(recorder, "_indicator_class", lambda: None)
     copied = []
-    monkeypatch.setattr(recorder.clipboard, "copy_files", lambda paths, env: copied.extend(paths))
+    monkeypatch.setattr(
+        recorder.clipboard, "copy_files", lambda paths, env, resident=False: copied.extend(paths)
+    )
     monkeypatch.setattr(recorder.clipboard, "copy_text", lambda text, env: copied.append(text))
     install.copied = copied
     install.backends = backends

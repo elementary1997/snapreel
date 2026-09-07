@@ -42,7 +42,7 @@ def test_region_is_clamped_and_evened(wired, tmp_path):
 def test_clipboard_failure_keeps_the_clip(wired, tmp_path, monkeypatch):
     wired()
 
-    def explode(paths, env):
+    def explode(paths, env, resident=False):
         raise RuntimeError("буфер занят")
 
     monkeypatch.setattr(recorder.clipboard, "copy_files", explode)
@@ -85,7 +85,7 @@ def test_gif_mode_copies_gif_not_mp4(wired, tmp_path, monkeypatch):
 
 def test_path_as_text_mode(wired, tmp_path):
     wired()
-    cfg = config_for(tmp_path, copy_path_as_text=True)
+    cfg = config_for(tmp_path, clipboard="path")
 
     result = recorder.record(cfg, region=Region(0, 0, 100, 100), indicator=False, env=ENV)
 

@@ -63,6 +63,28 @@ def test_other_keys_do_not_reach_us(listener_class):
         listener.stop()
 
 
+def test_num_lock_does_not_eat_the_combination(listener_class):
+    """Замки клавиатуры живут в тех же битах, что и модификаторы.
+
+    Без снятия замков нажатие с включённым Num Lock не совпадало с
+    перехваченным — и при этом пропадало: до активного окна оно тоже не
+    доходит, комбинацию-то мы забрали.
+    """
+    caught = threading.Event()
+    listener = listener_class({"<ctrl>+<shift>+<alt>+r": caught.set})
+    listener.start()
+    try:
+        time.sleep(0.3)
+        _press("Num_Lock")  # включили
+        time.sleep(0.2)
+        _press("ctrl+shift+alt+r")
+
+        assert caught.wait(5), "с включённым Num Lock комбинация не дошла"
+    finally:
+        _press("Num_Lock")  # вернули как было
+        listener.stop()
+
+
 def test_a_stopped_listener_lets_the_combination_go(listener_class):
     seen: list[str] = []
     listener = listener_class({"<ctrl>+<shift>+<alt>+r": lambda: seen.append("наша")})

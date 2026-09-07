@@ -116,6 +116,48 @@ def test_a_combination_taken_by_someone_else_is_explained(monkeypatch, x_server)
     assert "уже занял" in str(failure.value)
 
 
+def test_a_refused_binding_is_reported_by_the_probe(monkeypatch, x_server):
+    """Отказ виден только по итогу привязки: заранее его знать неоткуда."""
+    x_server(record=False)
+
+    class Busy:
+        def __init__(self, bindings):
+            pass
+
+        def start(self):
+            raise hotkeys_x11.GrabError("комбинацию уже кто-то держит")
+
+    monkeypatch.setattr(hotkeys_x11, "Listener", Busy)
+
+    assert hotkeys.why_silent(X11) is None  # заранее известных причин нет
+    assert "уже кто-то держит" in hotkeys.probe(Config(), X11)
+
+
+def test_a_working_binding_leaves_the_probe_silent(monkeypatch, x_server):
+    x_server(record=False)
+    stopped = []
+
+    class Fine:
+        def __init__(self, bindings):
+            pass
+
+        def start(self):
+            pass
+
+        def stop(self):
+            stopped.append("отпустили")
+
+    monkeypatch.setattr(hotkeys_x11, "Listener", Fine)
+
+    assert hotkeys.probe(Config(), X11) is None
+    assert stopped, "проба обязана отпускать комбинации за собой"
+
+
+def test_the_probe_repeats_a_reason_it_already_knows():
+    """В Wayland пробовать нечего — ответ известен заранее."""
+    assert "Wayland" in hotkeys.probe(Config(), WAYLAND)
+
+
 def test_the_locks_do_not_break_a_combination():
     """Num Lock и Caps Lock живут в тех же битах, что и модификаторы.
 

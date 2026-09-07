@@ -636,11 +636,12 @@ def _doctor(cfg) -> int:
         print("pynput          нет (нужен трею и `snapreel daemon` для хоткеев)")
 
     # «Хоткеи не работают» — самая частая жалоба, и причина у неё всегда
-    # своя: композитор Wayland, X-сервер без RECORD, занятая комбинация.
-    # Молчать о ней нельзя: у оконной сборки stderr никто не видит
+    # своя: композитор Wayland, X-сервер без RECORD, занятая соседом
+    # комбинация. Поэтому не перечисляем известные причины, а пробуем встать
+    # на комбинации по-настоящему и сразу отпускаем
     from . import hotkeys
 
-    silent = hotkeys.why_silent(env)
+    silent = hotkeys.probe(cfg, env)
     print(f"хоткеи:         {'не слушаются' if silent else hotkeys.mechanism(env)}")
     if silent:
         print(f"                {silent}")

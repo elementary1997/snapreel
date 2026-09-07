@@ -31,8 +31,9 @@ from .platform_info import Environment, detect
 # `updates.check` по своей отметке в updates.json.
 FIRST_CHECK = 60.0
 CHECK_TICK = 3600.0
-# сколько трей ждёт упаковку при выходе. Столько же занимает сборка GIF из
-# длинного клипа; бросить её значило бы потерять уже записанное
+# сколько трей ждёт упаковку, прежде чем вернуть управление. Дольше ждать
+# незачем: поток упаковки не демонский, и процесс всё равно не уйдёт, пока
+# клип не окажется в буфере обмена, — сколько бы ни собирался GIF
 PACKING_WAIT = 120.0
 
 
@@ -76,6 +77,7 @@ class TrayApp:
         self._busy = False  # идёт запись — она живёт в этом же процессе
         self._running = None  # запущенный ffmpeg, пока висит рамка
         self._window_open = False  # окно настроек открыто прямо здесь
+        self._hotkey_problem: str | None = None  # почему комбинации не встали
         self._listener = None
         self._release: updates.Release | None = None
         self._icon = None
@@ -87,6 +89,11 @@ class TrayApp:
     @property
     def recording(self) -> bool:
         return self._busy
+
+    @property
+    def hotkey_problem(self) -> str | None:
+        """Чем кончилась последняя привязка комбинаций. `None` — встали."""
+        return self._hotkey_problem
 
     @property
     def settings_open(self) -> bool:
@@ -201,8 +208,13 @@ class TrayApp:
             return
         # дальше ни одного окна: ffmpeg дописывает файл, собирает GIF и
         # кладёт его в буфер — это секунды, а на GIF и минуты. В главном
-        # потоке иконка всё это время была бы немой
-        self._threads.append(_start(lambda: self._pack(tail)))
+        # потоке иконка всё это время была бы немой.
+        #
+        # Поток намеренно не демонский: выход из меню не должен обрывать
+        # упаковку на полпути, а сколько она продлится, заранее не знает
+        # никто — сборке GIF отведено столько, сколько сказано в конфиге.
+        # Процесс дождётся её сам, даже если иконка уже погасла
+        self._threads.append(_start(lambda: self._pack(tail), daemon=False))
 
     def _pack(self, tail: Callable[[], None]) -> None:
         try:
@@ -231,7 +243,13 @@ class TrayApp:
 
         try:
             session = recorder.start(
-                self.config, as_gif=as_gif, env=self.env, on_started=self._remember
+                self.config,
+                as_gif=as_gif,
+                env=self.env,
+                on_started=self._remember,
+                # трей — резидент: на Linux буфером обмена он владеет сам,
+                # и файл уходит туда во всех форматах разом
+                resident=True,
             )
         finally:
             # рамка закрылась: останавливать больше нечего
@@ -276,7 +294,7 @@ class TrayApp:
         try:
             from .settings_ui import open_settings
 
-            open_settings(self.config, self.config_path)
+            open_settings(self.config, self.config_path, hotkey_note=self._hotkey_problem)
         except Exception as exc:  # окно не должно уносить с собой иконку
             self._notify("snapreel", f"не открыть настройки: {exc}")
         finally:
@@ -310,8 +328,10 @@ class TrayApp:
     def bind_hotkeys(self) -> None:
         """Перевешивает комбинации на текущий конфиг.
 
-        Молчит, когда не вышло: в Wayland глобальных хоткеев нет вовсе, а
-        иконка в трее там работает и остаётся единственной точкой входа.
+        Отказ — не повод гаснуть, но и не повод молчать: в Wayland глобальных
+        клавиш нет вовсе, а на X11 комбинацию мог занять рабочий стол.
+        Причина запоминается (её показывает окно настроек) и уходит
+        уведомлением: `stderr` у оконной сборки Windows никто не читает.
         """
         from .hotkeys import HotkeyError, listen
 
@@ -319,7 +339,11 @@ class TrayApp:
         try:
             self._listener = listen(self.config, self.record, self.env)
         except HotkeyError as exc:
+            self._hotkey_problem = str(exc)
             print(f"snapreel: горячие клавиши не слушаем — {exc}", file=sys.stderr)
+            self._notify("snapreel", f"комбинации не работают: {exc}")
+            return
+        self._hotkey_problem = None
 
     def unbind_hotkeys(self) -> None:
         listener, self._listener = self._listener, None
@@ -422,6 +446,15 @@ class TrayApp:
         """
         self._stopping.set()
         self.unbind_hotkeys()
+        # буфером обмена на X11 владеет наш же процесс: уходя, отдаём
+        # содержимое тому, кто нас переживёт, — иначе человек, закрывший
+        # иконку сразу после записи, останется с пустым буфером
+        from . import clipboard
+
+        try:
+            clipboard.hand_off(self.env)
+        except Exception as exc:  # выход не отменяется из-за буфера
+            print(f"snapreel: буфер обмена не передан — {exc}", file=sys.stderr)
         recording, self._running = self._running, None
         if recording is not None:
             self._notify("snapreel", "заканчиваю запись — клип уйдёт в буфер обмена")
@@ -564,7 +597,9 @@ def run(config: Config, path: Path | None = None, env: Environment | None = None
     finally:
         app.quit()
         # упаковка идёт фоновым потоком, и выход не вправе её оборвать: там
-        # клип превращается в файл и уходит в буфер обмена
+        # клип превращается в файл и уходит в буфер обмена. Ждём её здесь,
+        # чтобы уведомление успело выйти при живом трее; а если она дольше —
+        # процесс дождётся сам, поток не демонский
         app.join(timeout=PACKING_WAIT)
     return 0
 
@@ -599,8 +634,9 @@ def _run_job(job: Callable[[], None]) -> None:
 # --- мелочи ---------------------------------------------------------------
 
 
-def _start(job: Callable[[], None]) -> threading.Thread:
-    thread = threading.Thread(target=job, daemon=True)
+def _start(job: Callable[[], None], daemon: bool = True) -> threading.Thread:
+    """Фоновая работа трея. `daemon=False` — работа, которую нельзя бросить."""
+    thread = threading.Thread(target=job, daemon=daemon)
     thread.start()
     return thread
 

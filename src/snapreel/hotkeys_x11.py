@@ -113,8 +113,8 @@ class Listener:
         if catcher.get_error() is not None:
             self.stop()
             raise GrabError(
-                "комбинацию уже занял кто-то другой — рабочий стол или другое "
-                "приложение. Выберите другую в настройках."
+                "комбинацию уже кто-то держит — рабочий стол, другое приложение "
+                "или уже запущенный snapreel. Выберите другую в настройках."
             )
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()

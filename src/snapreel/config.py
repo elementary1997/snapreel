@@ -12,6 +12,8 @@ from . import bundled, naming
 
 APP_NAME = "snapreel"
 DEFAULT_FFMPEG = "ffmpeg"
+# "file" — в буфер уходит сам файл, "path" — путь к нему текстом
+CLIPBOARD_MODES = ("file", "path")
 
 
 @dataclass
@@ -36,7 +38,9 @@ class Config:
     output_dir: str = ""  # пусто -> ~/Videos/Snapreel (или ~/Movies на macOS)
     filename_template: str = "snapreel-%Y%m%d-%H%M%S"
     keep_days: int = 30  # 0 -> не удалять
-    copy_path_as_text: bool = False
+    # что уходит в буфер обмена: "file" — сам клип (вставится вложением),
+    # "path" — путь к нему текстом
+    clipboard: str = "file"
 
     # демон
     hotkey_mp4: str = "<ctrl>+<shift>+<alt>+r"
@@ -75,6 +79,9 @@ class Config:
             raise ValueError("min_seconds больше max_seconds")
         if not 0 <= self.crf <= 51:
             raise ValueError("crf должен быть в диапазоне 0..51")
+        if self.clipboard not in CLIPBOARD_MODES:
+            allowed = " или ".join(f'"{mode}"' for mode in CLIPBOARD_MODES)
+            raise ValueError(f"clipboard: ожидается {allowed}, получено {self.clipboard!r}")
         naming.validate(self.filename_template)
 
     def _check_types(self) -> None:
@@ -144,9 +151,22 @@ def load(path: Path | None = None) -> Config:
         for key, value in data.items():
             if key in known:
                 setattr(config, key, value)
+        _apply_legacy(config, data)
     _apply_env(config)
     config.validate()
     return config
+
+
+def _apply_legacy(config: Config, data: dict) -> None:
+    """Читает ключи, которых больше нет.
+
+    До 0.6.0 выбор «файл или путь» жил булевым `copy_path_as_text`. Конфиг
+    правится руками и живёт годами: молча забыть его значение значило бы
+    поменять человеку поведение на противоположное без единого слова.
+    """
+    if "clipboard" in data or "copy_path_as_text" not in data:
+        return
+    config.clipboard = "path" if data["copy_path_as_text"] else "file"
 
 
 def _apply_env(config: Config) -> None:

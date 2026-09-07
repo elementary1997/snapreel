@@ -405,11 +405,14 @@ class UpdatePanel(QWidget):
 class SettingsWindow(QDialog):
     """Окно целиком: разделы слева, строки настроек справа, сохранение внизу."""
 
-    def __init__(self, config: Config, path: Path | None = None):
+    def __init__(self, config: Config, path: Path | None = None, hotkey_note: str | None = None):
         super().__init__()
         self.config = config
         self.path = path
         self.saved = False
+        # чем кончилась привязка у того, кто окно открыл: трей знает это
+        # точно, а окно само проверить не может — комбинации уже заняты им
+        self.hotkey_note = hotkey_note
         self.palette = theme.resolve(getattr(config, "theme", "auto"))
         self._widgets: dict[str, object] = {}
         self._hints: dict[str, QLabel] = {}
@@ -496,7 +499,7 @@ class SettingsWindow(QDialog):
 
         if group.title == HOTKEY_GROUP:
             column.addWidget(_divider())
-            column.addWidget(_hotkey_status())
+            column.addWidget(_hotkey_status(self.hotkey_note))
 
         if group.title == UPDATE_GROUP:
             column.addWidget(_divider())
@@ -542,8 +545,11 @@ class SettingsWindow(QDialog):
             widget = AudioBox(str(value), self.config)
         elif field.kind == "choice":
             widget = QComboBox()
-            widget.addItems(list(field.choices))
-            widget.setCurrentText(str(value))
+            names = dict(field.labels)
+            for choice in field.choices:
+                # подпись видит человек, а в конфиг уходит значение рядом с ней
+                widget.addItem(names.get(choice, choice), choice)
+            widget.setCurrentIndex(max(widget.findData(str(value)), 0))
         elif field.kind == "dir":
             widget = DirEdit(str(value))
         else:
@@ -573,7 +579,8 @@ class SettingsWindow(QDialog):
             elif isinstance(widget, AudioBox):
                 raw[name] = widget.text()
             elif isinstance(widget, QComboBox):
-                raw[name] = widget.currentText()
+                chosen = widget.currentData()
+                raw[name] = widget.currentText() if chosen is None else str(chosen)
             else:
                 raw[name] = widget.text()
         return raw
@@ -626,18 +633,18 @@ def _restyle(label: QLabel, role: str, text: str) -> None:
     label.style().polish(label)
 
 
-def _hotkey_status() -> QLabel:
+def _hotkey_status(note: str | None = None) -> QLabel:
     """Строка о том, слышны ли комбинации в этой сессии, и почему нет.
 
     Раньше причина уходила в `stderr`, которого у оконной сборки нет: человек
     видел лишь то, что ни одна комбинация не работает, и объяснить это было
-    некому. Спрашивать разрешено любое окружение — ответ считается быстро и
-    ничего не запускает.
+    некому. `note` — чем кончилась привязка у трея; он знает это точнее, чем
+    любая проверка отсюда: комбинации уже держит он сам.
     """
     from . import hotkeys
 
     try:
-        refusal = hotkeys.why_silent()
+        refusal = note or hotkeys.why_silent()
     except Exception as exc:  # окно настроек не падает из-за подсказки
         refusal = f"не проверить: {exc}"
 
@@ -667,7 +674,7 @@ def _first_group_with(errors: dict[str, str]) -> str:
     return settings.GROUPS[0].title
 
 
-def open_settings(config: Config, path: Path | None = None) -> bool:
+def open_settings(config: Config, path: Path | None = None, hotkey_note: str | None = None) -> bool:
     """Показывает окно настроек. True — пользователь сохранил изменения.
 
     Диалог крутит свой цикл событий: так окно ждёт человека и в одиночном
@@ -676,6 +683,6 @@ def open_settings(config: Config, path: Path | None = None) -> bool:
     from .qt import application
 
     application(config)
-    window = SettingsWindow(config, path)
+    window = SettingsWindow(config, path, hotkey_note)
     window.exec()
     return window.saved

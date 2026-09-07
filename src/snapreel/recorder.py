@@ -53,6 +53,9 @@ class Session:
     video: Path
     as_gif: bool
     user_stopped: bool = False
+    # запись идёт из резидента (трея), и он переживёт её: на Linux это
+    # решает, кому владеть буфером обмена
+    resident: bool = False
 
 
 def record(
@@ -75,6 +78,7 @@ def start(
     indicator: bool = True,
     env: Environment | None = None,
     on_started: Callable[[Recording], None] | None = None,
+    resident: bool = False,
 ) -> Session:
     """Часть с окнами: выделение области, запись и рамка с таймером.
 
@@ -106,6 +110,7 @@ def start(
         recording=recording,
         video=video_path,
         as_gif=as_gif,
+        resident=resident,
     )
     if on_started is not None:
         on_started(recording)
@@ -160,7 +165,7 @@ def finish(session: Session) -> Result:
         except EncodeError as exc:
             result.gif_error = str(exc)
 
-    _to_clipboard(result, config, env)
+    _to_clipboard(result, config, env, session.resident)
     _announce(result, config, env)
     return result
 
@@ -180,13 +185,13 @@ def _wait_out(recording, limit: float) -> None:
         time.sleep(0.1)
 
 
-def _to_clipboard(result: Result, config: Config, env: Environment) -> None:
+def _to_clipboard(result: Result, config: Config, env: Environment, resident: bool = False) -> None:
     # в буфере живёт что-то одно: либо файл, либо путь к нему
     try:
-        if config.copy_path_as_text:
+        if config.clipboard == "path":
             clipboard.copy_text(str(result.payload), env)
         else:
-            clipboard.copy_files([result.payload], env)
+            clipboard.copy_files([result.payload], env, resident=resident)
     except Exception as exc:  # буфер не должен ронять уже готовую запись
         result.clipboard_error = str(exc)
 

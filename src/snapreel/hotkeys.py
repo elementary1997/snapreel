@@ -56,6 +56,28 @@ def why_silent(env: Environment | None = None) -> str | None:
     return None
 
 
+def probe(config: Config, env: Environment | None = None) -> str | None:
+    """Пробует встать на комбинации и сразу отпускает. `None` — встали.
+
+    `why_silent` перечисляет причины, известные заранее, и главного не знает:
+    встал ли слушатель. А не встать он может и по месту — комбинацию мог
+    занять рабочий стол, а клавиши в ней может не оказаться на раскладке.
+    Такой отказ человек обязан увидеть, а не догадаться о нём по тишине.
+    """
+    refusal = why_silent(env)
+    if refusal is not None:
+        return refusal
+    try:
+        listener = listen(config, lambda as_gif: None, env)
+    except HotkeyError as exc:
+        return str(exc)
+    try:
+        listener.stop()
+    except Exception:  # отпустить не вышло — на ответ это не влияет
+        pass
+    return None
+
+
 def mechanism(env: Environment | None = None) -> str:
     """Чем именно ловятся нажатия — для `doctor` и окна настроек."""
     env = env or detect()
