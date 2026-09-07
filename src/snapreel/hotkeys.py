@@ -22,9 +22,9 @@ class HotkeyError(RuntimeError):
 def listen(config: Config, handler: Callable[[bool], None], env: Environment | None = None):
     """Вешает обе комбинации и сразу отдаёт слушателя, ничего не ожидая.
 
-    `handler(as_gif)` вызывается в потоке pynput, поэтому трогать из него Tk
-    нельзя — так его зовёт трей, который на нажатие лишь запускает отдельный
-    процесс записи. Кому нужен главный поток, тому `run`.
+    `handler(as_gif)` вызывается в потоке pynput, а окна оттуда трогать
+    нельзя: трей на нажатие лишь передаёт действие в главный поток
+    (`TrayApp._on_main`). Кому нужен главный поток целиком, тому `run`.
     """
     env = env or detect()
     if env.platform is Platform.LINUX_WAYLAND:

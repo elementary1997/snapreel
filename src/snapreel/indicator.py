@@ -54,6 +54,7 @@ class RecordingIndicator:
         self.env = env or detect()
         self.stop_requested = False
         self._done = False
+        self._loop = None
 
         from .qt import application
         from .selector import _logical
@@ -180,16 +181,25 @@ class RecordingIndicator:
     def _finish(self) -> None:
         self._done = True
         self.timer.stop()
+        if self._loop is not None:
+            self._loop.quit()
 
     def run(self) -> bool:
-        """Возвращает True, если остановил пользователь, а не таймер."""
-        from PySide6.QtWidgets import QApplication
+        """Возвращает True, если остановил пользователь, а не таймер.
 
-        app = QApplication.instance()
+        Ожидание держит вложенный цикл событий, а не опрос в холостую:
+        рамка висит десятками секунд, и всё это время процессор был занят
+        ничем. Из трея цикл к тому же вкладывается в уже работающий, и
+        иконка продолжает отвечать.
+        """
+        from PySide6.QtCore import QEventLoop
+
+        self._loop = QEventLoop()
         try:
-            while not self._done:
-                app.processEvents()
+            if not self._done:
+                self._loop.exec()
         finally:
+            self._loop = None
             self.close()
         return self.stop_requested
 

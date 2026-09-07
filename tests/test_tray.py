@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import threading
+import time
 
 import pytest
 
 from snapreel import tray
+from snapreel.backends import CaptureError
 from snapreel.config import Config
-from snapreel.errors import TrayUnavailable
+from snapreel.errors import SelectionCancelled, TrayUnavailable
 from snapreel.platform_info import Environment, Platform
 from snapreel.updates import Release, UpdateError
 
@@ -25,31 +27,10 @@ RELEASE = Release(
 )
 
 
-class FakeProcess:
-    """Запущенный snapreel, который живёт ровно столько, сколько скажет тест."""
-
-    def __init__(self, done: bool = False):
-        self._done = threading.Event()
-        self.returncode: int | None = None
-        if done:
-            self.finish()
-
-    def poll(self):
-        return self.returncode
-
-    def wait(self, timeout=None):
-        self._done.wait(timeout or 5)
-        return self.returncode
-
-    def finish(self):
-        self.returncode = 0
-        self._done.set()
-
-
 class Harness:
-    def __init__(self, app, launched, notes, state):
+    def __init__(self, app, recorded, notes, state):
         self.app = app
-        self.launched = launched
+        self.recorded = recorded
         self.notes = notes
         self.state = state
 
@@ -65,27 +46,22 @@ class Harness:
 
 @pytest.fixture
 def tray_app(monkeypatch, tmp_path):
-    """Трей, у которого запуск процессов, автозапуск и хоткеи — подставные."""
-    launched: list[list[str]] = []
+    """Трей, у которого запись, автозапуск и хоткеи — подставные."""
+    recorded: list[bool] = []
     notes: list[str] = []
     state = {"autostart": False, "bound": 0}
-
-    def launcher(argv):
-        """По умолчанию процесс завершается сразу: тесту важна сама команда."""
-        launched.append(list(argv))
-        return FakeProcess(done=True)
 
     app = tray.TrayApp(
         Config(),
         tmp_path / "config.toml",
         ENV,
-        launcher=launcher,
+        record_fn=recorded.append,
         notifier=lambda title, message: notes.append(message),
     )
 
     monkeypatch.setattr(tray.autostart, "autostart_enabled", lambda env=None: state["autostart"])
     monkeypatch.setattr(app, "bind_hotkeys", lambda: state.__setitem__("bound", state["bound"] + 1))
-    return Harness(app, launched, notes, state)
+    return Harness(app, recorded, notes, state)
 
 
 # --- меню -----------------------------------------------------------------
@@ -117,49 +93,103 @@ def test_the_autostart_item_shows_the_current_state(tray_app):
 # --- запись ---------------------------------------------------------------
 
 
-def test_recording_starts_the_record_command(tray_app):
+def test_recording_happens_in_the_tray_itself(tray_app):
+    """Отдельного процесса больше нет: он стоил секунд ожидания (ADR-0010)."""
     tray_app.app.record()
-    tray_app.app.join()
-    assert tray_app.launched[0][-1] == "record"
+
+    assert tray_app.recorded == [False]
+    assert not tray_app.app.recording
 
 
 def test_the_gif_item_asks_for_a_gif(tray_app):
     tray_app.app.record_gif()
-    tray_app.app.join()
-    assert tray_app.launched[0][-1] == "--gif"
+
+    assert tray_app.recorded == [True]
 
 
 def test_a_second_recording_does_not_start_while_the_first_runs(tray_app, monkeypatch):
-    process = FakeProcess()
-    monkeypatch.setattr(tray_app.app, "_launch", lambda argv: process)
-    tray_app.app.record()
-    assert tray_app.app.recording
+    def busy(as_gif):
+        """Внутри записи трей отвечает на всё остальное — цикл событий общий."""
+        assert tray_app.app.recording
+        tray_app.app.record()
 
+    monkeypatch.setattr(tray_app.app, "_record_clip", busy)
     tray_app.app.record()
+
     assert tray_app.notes == ["запись уже идёт"]
-
-    process.finish()
     assert not tray_app.app.recording
 
 
 def test_the_menu_says_it_is_recording_and_comes_back_afterwards(tray_app, monkeypatch):
-    process = FakeProcess()
-    monkeypatch.setattr(tray_app.app, "_launch", lambda argv: process)
-    tray_app.app.record()
-    assert tray_app.item("record_mp4").label == "Идёт запись…"
-    assert not tray_app.item("record_gif").enabled
+    labels = {}
 
-    process.finish()
+    def busy(as_gif):
+        labels["mp4"] = tray_app.item("record_mp4").label
+        labels["gif"] = tray_app.item("record_gif").enabled
+
+    monkeypatch.setattr(tray_app.app, "_record_clip", busy)
+    tray_app.app.record()
+
+    assert labels == {"mp4": "Идёт запись…", "gif": False}
     assert tray_app.item("record_mp4").enabled
 
 
-def test_a_failed_launch_is_reported_and_does_not_raise(tray_app, monkeypatch):
-    def refuse(argv):
-        raise OSError("нет такого файла")
+def test_a_failed_recording_is_reported_and_does_not_raise(tray_app, monkeypatch):
+    def refuse(as_gif):
+        raise CaptureError("не найден ffmpeg")
 
-    monkeypatch.setattr(tray_app.app, "_launch", refuse)
+    monkeypatch.setattr(tray_app.app, "_record_clip", refuse)
     tray_app.app.record()
-    assert "не запустить запись" in tray_app.notes[0]
+
+    assert "запись не вышла" in tray_app.notes[0]
+    assert "не найден ffmpeg" in tray_app.notes[0]
+    assert not tray_app.app.recording
+
+
+def test_a_cancelled_selection_says_nothing(tray_app, monkeypatch):
+    """Esc в оверлее — это ответ человека, а не сбой, о котором надо шуметь."""
+
+    def cancel(as_gif):
+        raise SelectionCancelled("выделение отменено")
+
+    monkeypatch.setattr(tray_app.app, "_record_clip", cancel)
+    tray_app.app.record()
+
+    assert tray_app.notes == []
+
+
+def test_the_bridge_delivers_that_recording_to_the_qt_loop(tray_app, need):
+    """Второй конец того же моста: очередь Qt обязана донести действие."""
+    need("PySide6.QtWidgets")
+    from PySide6.QtWidgets import QApplication
+
+    qt_app = QApplication.instance() or QApplication([])
+    bridge = tray.bridge_class()()
+    bridge.invoked.connect(lambda job: job())
+    tray_app.app.attach(tray._Icon(bridge, qt_app))
+
+    thread = threading.Thread(target=tray_app.app.record_gif)
+    thread.start()
+    thread.join(5)
+    deadline = time.monotonic() + 5
+    while not tray_app.recorded and time.monotonic() < deadline:
+        qt_app.processEvents()
+
+    assert tray_app.recorded == [True]
+
+
+def test_a_hotkey_press_hands_the_recording_to_the_main_thread(tray_app):
+    """Оверлей — окно Qt, и заводить его из потока pynput нельзя."""
+    jobs = []
+    tray_app.app.attach(FakeIcon(jobs))
+
+    threading.Thread(target=tray_app.app.record).start()
+    while not jobs:
+        pass
+
+    assert tray_app.recorded == []  # ещё ничего не началось: ждём главный поток
+    jobs.pop()()  # а это уже он
+    assert tray_app.recorded == [False]
 
 
 # --- настройки ------------------------------------------------------------
@@ -175,7 +205,7 @@ def test_settings_open_in_the_same_process(tray_app, monkeypatch):
     tray_app.app.open_settings()
 
     assert opened == [tray_app.app.config_path]
-    assert tray_app.launched == []  # процесс на это не заводится
+    assert tray_app.recorded == []  # окно настроек не путается с записью
 
 
 def test_a_second_settings_window_does_not_open(tray_app, monkeypatch):
@@ -366,14 +396,25 @@ def test_the_menu_translates_to_a_qt_menu(tray_app, need):
 
 
 class FakeIcon:
-    """То, что трей считает иконкой: обновить меню и погасить приложение."""
+    """То, что трей считает иконкой: меню, вызов в главном потоке и выход.
 
-    def __init__(self):
+    Со списком `jobs` действие не выполняется, а откладывается — так тест
+    видит, что из чужого потока трей не делает ничего сам.
+    """
+
+    def __init__(self, jobs=None):
         self.updates = 0
         self.stopped = 0
+        self.jobs = jobs
 
     def update_menu(self) -> None:
         self.updates += 1
+
+    def invoke(self, job) -> None:
+        if self.jobs is None:
+            job()
+        else:
+            self.jobs.append(job)
 
     def stop(self) -> None:
         self.stopped += 1
@@ -470,7 +511,7 @@ def test_a_broken_hotkey_in_the_config_does_not_take_down_the_tray(monkeypatch, 
     """
     config = Config()
     config.hotkey_mp4 = "мусор+"
-    app = tray.TrayApp(config, tmp_path / "config.toml", ENV, launcher=lambda argv: None)
+    app = tray.TrayApp(config, tmp_path / "config.toml", ENV, record_fn=lambda as_gif: None)
 
     app.bind_hotkeys()  # молча пережить, а не бросить
 
@@ -490,27 +531,16 @@ def test_an_unparsable_hotkey_comes_out_as_our_own_error(tmp_path, need):
     assert "не разобрать" in str(failure.value)
 
 
-def test_the_recording_process_reads_the_same_config(tray_app):
-    """Запись должна идти с тем же конфигом, который читает трей."""
-    path = str(tray_app.app.config_path)
+def test_recording_takes_the_config_the_tray_has_now(tmp_path, monkeypatch):
+    """Правки в окне настроек действуют на следующую запись, а не с перезапуска."""
+    seen = []
+    app = tray.TrayApp(Config(), tmp_path / "config.toml", ENV, notifier=lambda *_: None)
+    monkeypatch.setattr("snapreel.recorder.record", lambda config, **kw: seen.append(config))
 
-    tray_app.app.record()
-    tray_app.app.join()
-
-    argv = tray_app.launched[0]
-    assert "--config" in argv
-    assert argv[argv.index("--config") + 1] == path
-
-
-def test_a_default_config_adds_no_flag(tmp_path):
-    """Без явного `--config` дочерний процесс сам найдёт стандартный файл."""
-    launched = []
-    app = tray.TrayApp(Config(), None, ENV, launcher=lambda argv: launched.append(list(argv)))
-
+    app.config.fps = 60
     app.record()
-    app.join()
 
-    assert "--config" not in launched[0]
+    assert seen[0].fps == 60
 
 
 def test_the_first_launch_says_where_to_look(tray_app):

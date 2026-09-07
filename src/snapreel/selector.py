@@ -60,7 +60,7 @@ def _logical(value: int, env: Environment) -> int:
 def _overlay_class():
     """Класс окна собирается лениво: без Qt модуль обязан импортироваться."""
     try:
-        from PySide6.QtCore import QPoint, QRect, Qt
+        from PySide6.QtCore import QEventLoop, QPoint, QRect, Qt
         from PySide6.QtGui import QColor, QFont, QPainter, QPen
         from PySide6.QtWidgets import QWidget
     except ImportError as exc:
@@ -76,6 +76,7 @@ def _overlay_class():
             self.env = env
             self.min_side = min_side
             self.result: Region | None = None
+            self._loop: QEventLoop | None = None
             self.start: QPoint | None = None
             self.current: QPoint | None = None
 
@@ -179,15 +180,25 @@ def _overlay_class():
 
         # --- запуск ------------------------------------------------------
 
-        def run(self) -> Region:
-            from PySide6.QtWidgets import QApplication
+        def closeEvent(self, event) -> None:
+            if self._loop is not None:
+                self._loop.quit()
+            super().closeEvent(event)
 
+        def run(self) -> Region:
+            """Ждёт выделения вложенным циклом событий.
+
+            Опрос в холостую занимал ядро на всё время, пока человек целится
+            мышью, а из трея этот цикл вкладывается в уже работающий — иконка
+            и её меню продолжают отвечать.
+            """
+            self._loop = QEventLoop()
             self.show()
             self.raise_()
             self.activateWindow()
-            app = QApplication.instance()
-            while self.isVisible():
-                app.processEvents()
+            if self.isVisible():
+                self._loop.exec()
+            self._loop = None
             if self.result is None:
                 raise SelectionCancelled("выделение отменено")
             return normalize(self.result, self.min_side)

@@ -15,6 +15,7 @@
 | [0007](0007-update-over-the-network.md) | Обновление через сеть — единственное исключение из «в сеть не ходим» | Accepted | 2026-09-06 |
 | [0008](0008-tray-icon-on-pystray.md) | Иконка в трее — на pystray, отдельным резидентом | Superseded by ADR-0009 | 2026-09-06 |
 | [0009](0009-qt-for-the-interface.md) | Интерфейс — на Qt (PySide6) | Accepted | 2026-09-06 |
+| [0010](0010-record-inside-the-tray-process.md) | Запись идёт в процессе трея, а не отдельным | Accepted | 2026-09-07 |
 
 ## Что заслуживает ADR
 

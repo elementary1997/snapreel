@@ -4,10 +4,9 @@
 и раз в сутки спрашивает github о новой версии. Настройки открываются из его
 меню — по желанию, а не при запуске.
 
-Окна настроек и установки открываются прямо здесь: у Qt цикл событий один на
-всё приложение, и вкладывать в него диалог — обычное дело. А вот запись
-по-прежнему идёт отдельным процессом (`snapreel record`): у неё свой оверлей,
-свой ffmpeg и своё право упасть, не утащив с собой иконку.
+Всё, что показывает окна, происходит прямо здесь — и настройки, и установка,
+и сама запись: цикл событий Qt один на приложение, а отдельный процесс стоил
+человеку секунд ожидания между нажатием и оверлеем (ADR-0010).
 
 Qt ставится экстрой `.[ui]` и подтягивается лениво: без него обязаны работать
 и `doctor`, и запись по хоткею (ADR-0009).
@@ -15,17 +14,16 @@ Qt ставится экстрой `.[ui]` и подтягивается лен�
 
 from __future__ import annotations
 
-import subprocess
 import sys
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from . import autostart, notify, resources, updates
 from . import config as config_module
 from .config import Config
-from .errors import OverlayUnavailable, TrayUnavailable
+from .errors import OverlayUnavailable, SelectionCancelled, TrayUnavailable
 from .platform_info import Environment, detect
 
 # Первая проверка обновлений — не сразу: вход в систему и без нас занят.
@@ -64,15 +62,15 @@ class TrayApp:
         config: Config,
         config_path: Path | None = None,
         env: Environment | None = None,
-        launcher: Callable[[Sequence[str]], subprocess.Popen] | None = None,
+        record_fn: Callable[[bool], None] | None = None,
         notifier: Callable[[str, str], None] | None = None,
     ):
         self.config = config
         self.config_path = config_path
         self.env = env or detect()
-        self._launch = launcher or _spawn
+        self._record_clip = record_fn or self._record_here
         self._notify = notifier or (lambda title, message: notify.send(title, message, self.env))
-        self._recording: subprocess.Popen | None = None
+        self._busy = False  # идёт запись — она живёт в этом же процессе
         self._window_open = False  # окно настроек открыто прямо здесь
         self._listener = None
         self._release: updates.Release | None = None
@@ -84,7 +82,7 @@ class TrayApp:
 
     @property
     def recording(self) -> bool:
-        return _alive(self._recording)
+        return self._busy
 
     @property
     def settings_open(self) -> bool:
@@ -157,20 +155,49 @@ class TrayApp:
     # --- запись ----------------------------------------------------------
 
     def record(self, as_gif: bool = False) -> None:
-        """Запускает запись отдельным процессом, если предыдущая закончилась."""
-        if self.recording:
-            self._notify("snapreel", "запись уже идёт")
-            return
-        try:
-            self._recording = self._launch(autostart.launch_argv(as_gif, config=self.config_path))
-        except OSError as exc:
-            self._notify("snapreel", f"не запустить запись: {exc}")
-            return
-        self.refresh()
-        self._watch(self._recording, self.refresh)
+        """Просит начать запись; зовётся и из меню, и из потока хоткеев.
+
+        Сама работа уходит в главный поток: оверлей выделения и рамка —
+        обычные окна Qt, а его виджеты чужой поток трогать не вправе.
+        """
+        self._on_main(lambda: self._record_now(as_gif))
 
     def record_gif(self) -> None:
         self.record(as_gif=True)
+
+    def _record_now(self, as_gif: bool) -> None:
+        """Запись целиком, от выделения до буфера обмена, в этом же процессе."""
+        if self.recording:
+            self._notify("snapreel", "запись уже идёт")
+            return
+        self._busy = True
+        self.refresh()
+        try:
+            self._record_clip(as_gif)
+        except SelectionCancelled:
+            pass  # человек передумал — говорить ему об этом незачем
+        except Exception as exc:
+            # сбой записи не гасит иконку, а сообщение уходит уведомлением:
+            # у оконной сборки Windows потоков вывода нет, и стандартное
+            # «напечатали в stderr» человек бы не увидел
+            self._notify("snapreel", f"запись не вышла: {exc}")
+        finally:
+            self._busy = False
+            self.refresh()
+
+    def _record_here(self, as_gif: bool) -> None:
+        """Запись по умолчанию — прямо здесь, в цикле событий трея."""
+        from .recorder import record
+
+        record(self.config, as_gif=as_gif, env=self.env)
+
+    def _on_main(self, job: Callable[[], None]) -> None:
+        """Переносит работу в главный поток, если есть кому её передать."""
+        invoke = getattr(self._icon, "invoke", None)
+        if invoke is None:
+            job()
+            return
+        invoke(job)
 
     # --- настройки -------------------------------------------------------
 
@@ -178,8 +205,7 @@ class TrayApp:
         """Открывает окно настроек и по его закрытию перечитывает конфиг.
 
         Окно живёт в этом же процессе: цикл событий Qt один на приложение, и
-        диалог просто вкладывается в него. Запись — другое дело, она уходит
-        отдельным процессом.
+        диалог просто вкладывается в него — как и оверлей записи.
         """
         if self._window_open:
             return
@@ -331,16 +357,6 @@ class TrayApp:
         for thread in list(self._threads):
             thread.join(timeout)
 
-    def _watch(self, process: subprocess.Popen, then: Callable[[], None]) -> None:
-        def wait() -> None:
-            try:
-                process.wait()
-            except Exception:  # процесс мог сгинуть как угодно
-                pass
-            then()
-
-        self._threads.append(_start(wait))
-
 
 # --- Qt -------------------------------------------------------------------
 
@@ -392,6 +408,24 @@ def _handler(action: Callable[[], None] | None):
     return call
 
 
+def bridge_class():
+    """Мост из фоновых потоков в главный; как и все окна, собирается лениво.
+
+    Qt, как и любой тулкит, не разрешает трогать виджеты из чужого потока.
+    Проверка обновлений живёт в своём потоке, а хоткеи — в потоке pynput;
+    меню, иконку и окна трогает только главный — через эти сигналы.
+    `invoked` переносит в него целое действие: запись начинается с
+    полноэкранного оверлея, и звать её из чужого потока нельзя.
+    """
+    from PySide6.QtCore import QObject, Signal
+
+    class Bridge(QObject):
+        changed = Signal()
+        invoked = Signal(object)
+
+    return Bridge
+
+
 def run(config: Config, path: Path | None = None, env: Environment | None = None) -> int:
     """Показывает иконку и не возвращается, пока её не попросят исчезнуть."""
     from .qt import application
@@ -400,7 +434,7 @@ def run(config: Config, path: Path | None = None, env: Environment | None = None
     # а голый импорт Qt выдал бы человеку трейсбек вместо сообщения
     try:
         qt_app, _ = application(config)
-        from PySide6.QtCore import QObject, Qt, Signal
+        from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QMenu, QSystemTrayIcon
     except OverlayUnavailable as exc:
         raise TrayUnavailable(str(exc)) from exc
@@ -409,17 +443,7 @@ def run(config: Config, path: Path | None = None, env: Environment | None = None
 
     app = TrayApp(config, path, env)
 
-    class _Bridge(QObject):
-        """Мост из фоновых потоков в главный.
-
-        Qt, как и любой тулкит, не разрешает трогать виджеты из чужого
-        потока. Проверка обновлений и ожидание записи живут в потоках, а
-        меню и иконку меняет только главный — через этот сигнал.
-        """
-
-        changed = Signal()
-
-    bridge = _Bridge()
+    bridge = bridge_class()()
     menu = QMenu()
     icon_widget = QSystemTrayIcon(icon())
 
@@ -429,6 +453,7 @@ def run(config: Config, path: Path | None = None, env: Environment | None = None
         icon_widget.setToolTip(app.title())
 
     bridge.changed.connect(rebuild, Qt.ConnectionType.QueuedConnection)
+    bridge.invoked.connect(_run_job, Qt.ConnectionType.QueuedConnection)
     app.attach(_Icon(bridge, qt_app))
 
     rebuild()
@@ -461,7 +486,8 @@ def run(config: Config, path: Path | None = None, env: Environment | None = None
 
 
 class _Icon:
-    """То, что `TrayApp` считает иконкой: обновить меню и погасить приложение."""
+    """То, что `TrayApp` считает иконкой: обновить меню, позвать в главный
+    поток и погасить приложение."""
 
     def __init__(self, bridge, qt_app):
         self._bridge = bridge
@@ -471,20 +497,22 @@ class _Icon:
     def update_menu(self) -> None:
         self._bridge.changed.emit()
 
+    def invoke(self, job: Callable[[], None]) -> None:
+        self._bridge.invoked.emit(job)
+
     def stop(self) -> None:
         self._app.quit()
 
 
+def _run_job(job: Callable[[], None]) -> None:
+    """Выполняет отложенное действие в главном потоке, чем бы оно ни кончилось."""
+    try:
+        job()
+    except Exception as exc:  # иконка переживает любое действие
+        print(f"snapreel: {exc}", file=sys.stderr)
+
+
 # --- мелочи ---------------------------------------------------------------
-
-
-def _spawn(argv: Sequence[str]) -> subprocess.Popen:
-    """Запускает snapreel отдельным процессом и сразу отпускает его."""
-    return subprocess.Popen(list(argv), stdin=subprocess.DEVNULL)
-
-
-def _alive(process: subprocess.Popen | None) -> bool:
-    return process is not None and process.poll() is None
 
 
 def _start(job: Callable[[], None]) -> threading.Thread:

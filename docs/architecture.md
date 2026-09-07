@@ -41,8 +41,8 @@ graph LR
 graph TD
     cli[cli.py<br/>аргументы, вывод, диалоги]
     rec[recorder.py<br/>сценарий записи]
-    sel[selector.py<br/>оверлей выделения · Tk]
-    ind[indicator.py<br/>рамка и таймер · Tk]
+    sel[selector.py<br/>оверлей выделения · Qt]
+    ind[indicator.py<br/>рамка и таймер · Qt]
     back[backends/<br/>gdigrab · x11grab · wf-recorder · avfoundation]
     clip[clipboard/<br/>CF_HDROP · osascript · xclip · wl-copy]
     enc[encode.py<br/>GIF и probe]
@@ -52,11 +52,11 @@ graph TD
     deps[deps.py<br/>системные зависимости]
     auto[autostart.py<br/>системный хоткей]
     daemon[hotkeys.py<br/>демон pynput]
-    tray[tray.py<br/>иконка, меню, автозапуск · pystray]
+    tray[tray.py<br/>иконка, меню, автозапуск · Qt]
     upd[updates.py<br/>github releases]
 
     cli --> tray
-    tray -->|отдельным процессом| cli
+    tray --> rec
     tray --> daemon
     tray --> upd
     tray --> auto
@@ -86,13 +86,13 @@ sequenceDiagram
     participant U as Пользователь
     participant C as cli
     participant R as recorder
-    participant S as selector (Tk)
+    participant S as selector (Qt)
     participant B as backend
     participant F as ffmpeg
-    participant I as indicator (Tk)
+    participant I as indicator (Qt)
     participant K as clipboard
 
-    U->>C: snapreel record
+    U->>C: snapreel record (или пункт меню в трее)
     C->>R: record(config)
     R->>S: select_region()
     S-->>R: Region (физические пиксели)
@@ -110,27 +110,40 @@ sequenceDiagram
 
 ## Трей и процессы
 
-Иконка в трее — единственный долгоживущий процесс snapreel. Он **не создаёт
-ни одного окна**: и запись, и настройки запускаются как отдельные процессы
-того же исполняемого файла.
+Иконка в трее — единственный долгоживущий процесс snapreel, и он же делает
+всё остальное: цикл событий Qt один на приложение, и окна вкладываются в
+него — настройки, установка, оверлей выделения, рамка записи. Наружу уходит
+только `ffmpeg` (ADR-0010).
 
 ```mermaid
 graph LR
-    tray[snapreel tray<br/>pystray · pynput · updates]
-    rec[snapreel record<br/>Tk · ffmpeg]
-    set[snapreel settings<br/>Tk]
+    subgraph tray[snapreel tray · один процесс]
+        icon[иконка и меню · QSystemTrayIcon]
+        keys[хоткеи · pynput, свой поток]
+        rec[recorder<br/>оверлей → ffmpeg → буфер]
+        set[окно настроек]
+        upd[проверка обновлений<br/>свой поток]
+    end
+    ff[ffmpeg]
     gh[(github releases)]
 
-    tray -->|пункт меню или хоткей| rec
-    tray -->|пункт меню| set
-    set -->|конфиг сохранён| tray
-    tray -->|раз в сутки| gh
+    keys -->|сигнал в главный поток| rec
+    icon -->|пункт меню| rec
+    icon -->|пункт меню| set
+    set -->|конфиг сохранён| icon
+    rec --> ff
+    upd -->|раз в сутки| gh
 ```
 
-Причина разделения техническая: цикл событий pystray на macOS обязан идти в
-главном потоке, и Tk требует того же. Побочная выгода в том, что упавшая
-запись не уносит иконку, а изменённый в окне конфиг трей перечитывает после
-закрытия окна и перевешивает комбинации.
+Раньше запись уходила отдельным процессом — так требовала пара pystray + Tk,
+у которой два цикла событий не уживались в одном главном потоке. С Qt причина
+исчезла, а цена осталась: запуск второго процесса (в релизе — распаковка
+одиночного бинарника) стоил человеку секунд между нажатием комбинации и
+появлением оверлея.
+
+Работа из чужих потоков — хоткеи pynput и суточная проверка обновлений —
+попадает в главный поток через сигналы `Bridge` с очередью: виджеты Qt чужой
+поток трогать не вправе.
 
 ## Границы и правила
 
@@ -141,10 +154,12 @@ graph LR
   `autostart` — чистые функции и данные. Они и покрыты тестами плотнее всего.
 - **Внешние процессы всегда за фасадом.** ffmpeg вызывается только из
   `backends/*` и `encode.py`; системные утилиты — только из `clipboard/*`,
-  `autostart.py`, `deps.py`, `notify.py`.
+  `autostart.py`, `deps.py`, `notify.py`. И запускаются все они через
+  `proc.py`: на Windows консольный ребёнок оконного exe заводит себе чёрное
+  окно, и снимает это единственный флаг.
 - **GUI необязателен.** `selector`, `indicator` и `tray` подтягиваются лениво:
-  без tkinter работают `doctor`, `config`, `prune`, а запись — через
-  `--region`; без pystray работает всё, кроме самой иконки.
+  без PySide6 работают `doctor`, `config`, `prune`, а запись — через
+  `--region`.
 - **Сеть — только у `updates`**, и только к github (ADR-0007). Раз в сутки её
   дёргает трей, по требованию — команда `update` и кнопка в настройках.
 
@@ -155,6 +170,7 @@ graph LR
 | `src/snapreel/` | пакет |
 | `src/snapreel/backends/` | захват экрана, по файлу на платформу |
 | `src/snapreel/clipboard/` | буфер обмена: `windows.py` (ctypes), `posix.py` (macOS + Linux) |
+| `src/snapreel/assets/` | иконка приложения: PNG для окон и трея, ICO для exe |
 | `tests/` | pytest, без экрана и без ffmpeg |
 | `scripts/` | установщики для чистой машины, sync-скрипт правил агентов |
 | `docs/adr/` | принятые решения и их причины |
@@ -167,7 +183,7 @@ graph LR
 - **Мультимонитор на macOS.** avfoundation снимает один экран; область,
   пересекающая границу дисплеев, обрежется.
 - **Трей в GNOME под Wayland.** Иконка появится только с расширением
-  AppIndicator, а pystray о неудаче молчит — приходится самим спрашивать
-  оконную систему, есть ли владелец селекции `_NET_SYSTEM_TRAY_S<экран>`.
+  AppIndicator; Qt о неудаче не говорит, поэтому трей сам спрашивает
+  `QSystemTrayIcon.isSystemTrayAvailable` и объясняет отсутствие человеку.
 - **Буфер обмена в X11** держится процессом `xclip`; если пользователь убьёт
   его, вставка перестанет работать до следующей записи.
