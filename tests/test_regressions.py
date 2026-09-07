@@ -380,6 +380,23 @@ def test_doctor_lists_the_broken_hotkey_as_a_problem(tmp_path, capsys):
     assert "hotkey_gif" in capsys.readouterr().out
 
 
+def test_doctor_says_when_it_did_not_check_the_hotkeys(tmp_path, capsys, monkeypatch):
+    """На macOS проба убила бы процесс, и `doctor` обязан сказать это прямо.
+
+    Молча выдать перечень заранее известных причин за проверку — значит
+    ответить увереннее, чем есть на самом деле.
+    """
+    from snapreel.platform_info import Environment, Platform
+
+    monkeypatch.setattr(cli, "detect", lambda: Environment(Platform.MACOS, is_wsl=False))
+
+    cli.main(["--config", str(tmp_path / "c.toml"), "doctor"])
+
+    printed = capsys.readouterr().out
+    assert "не проверяли" in printed
+    assert "Универсальный доступ" in printed
+
+
 def test_daemon_refuses_an_unparsable_hotkey(tmp_path, capsys):
     code = cli.main(["--config", str(tmp_path / "c.toml"), "daemon", "--hotkey", "<ctrl>"])
 
