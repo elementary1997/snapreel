@@ -455,16 +455,7 @@ def _windows_install(hotkey: str) -> Outcome:
     record.parent.mkdir(parents=True, exist_ok=True)
     _powershell(windows_shortcut_script(record, hotkey))
 
-    # прежний `Snapreel.lnk` начинал запись, а щёлкают именно по нему.
-    # Переписываем на трей — и сначала убираем: `CreateShortcut` открывает
-    # существующий файл, и прежнее свойство Hotkey осталось бы на нём, то
-    # есть комбинация поднимала бы иконку вместо записи. Комбинация к этому
-    # моменту уже живёт на своём ярлыке, и потерять её эта уборка не может
-    path = windows_shortcut_path()
-    _drop(path)
-    _powershell(
-        windows_shortcut_script(path, argv=tray_argv(), description="Snapreel — иконка в трее")
-    )
+    path = _write_tray_shortcut()
     return Outcome(
         True,
         f"ярлык с хоткеем {to_windows(hotkey)} создан: {record}. "
@@ -473,15 +464,56 @@ def _windows_install(hotkey: str) -> Outcome:
     )
 
 
+def _write_tray_shortcut() -> Path:
+    """Пишет `Snapreel.lnk` — тот, которым программу открывают из «Пуска».
+
+    Сначала убираем, потом создаём: `CreateShortcut` открывает существующий
+    файл, а не заводит новый, и прежнее свойство Hotkey осталось бы на нём —
+    то есть комбинация поднимала бы иконку вместо записи. Зовётся и при
+    снятии комбинации, поэтому комбинация к этому моменту уже либо живёт на
+    своём ярлыке, либо снята вовсе: потерять её эта уборка не может.
+    """
+    path = windows_shortcut_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _drop(path)
+    _powershell(
+        windows_shortcut_script(path, argv=tray_argv(), description="Snapreel — иконка в трее")
+    )
+    return path
+
+
 def _windows_remove() -> Outcome:
-    removed = [
-        path for path in (windows_record_shortcut_path(), windows_shortcut_path()) if path.is_file()
-    ]
-    if not removed:
+    """Снимает комбинацию, но не пункт, которым программу открывают.
+
+    Убирается носитель комбинации. `Snapreel.lnk` остаётся: снявший
+    комбинацию не просил убирать «Snapreel» из «Пуска», а вернуть его можно
+    было бы только через `hotkey set`. Но на машинах, где snapreel ставился
+    до разделения ярлыков, комбинацию носит как раз он — поэтому он
+    переписывается на трей, и прежний Hotkey уходит вместе с файлом.
+    """
+    record = windows_record_shortcut_path()
+    launcher = windows_shortcut_path()
+    if not record.is_file() and not launcher.is_file():
         return Outcome(True, "ярлык snapreel не найден")
-    for path in removed:
-        path.unlink()
-    return Outcome(True, f"ярлык удалён: {removed[0]}")
+
+    if record.is_file():
+        record.unlink()
+    if not launcher.is_file():
+        return Outcome(True, f"ярлык удалён: {record}")
+    try:
+        _write_tray_shortcut()
+    except HotkeySetupError as exc:
+        # ярлык мы уже убрали, а вернуть не смогли: молчать об этом нельзя —
+        # человек ищет «Snapreel» в «Пуске» и не находит
+        return Outcome(
+            False,
+            f"комбинация снята, но ярлык «Snapreel» в «Пуске» не пересоздан: {exc}. "
+            "Верните его командой `snapreel hotkey set`.",
+        )
+    return Outcome(
+        True,
+        f"комбинация снята: {record} убран, «Snapreel» в «Пуске» остался открывать иконку",
+    )
 
 
 # --- macOS ----------------------------------------------------------------

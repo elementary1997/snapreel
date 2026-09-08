@@ -190,4 +190,16 @@ def relaunch(env: Environment | None = None) -> bool:
     """
     if not supported():
         return False
-    return launch(Path(sys.executable).resolve(), env)
+    env = env or detect()
+    # на macOS с прописанным LaunchAgent поднимать себя нельзя: у агента
+    # стоит KeepAlive, и launchd возвращает трей сам, как только прежний
+    # процесс вышел. Своя копия оказалась бы второй — две иконки рядом с
+    # часами и общая драка за комбинации
+    return launch(Path(sys.executable).resolve(), env, autostarted=_launchd_returns_us(env))
+
+
+def _launchd_returns_us(env: Environment) -> bool:
+    """Поднимет ли нас система сама. Так умеет только LaunchAgent на macOS."""
+    from . import autostart
+
+    return env.platform is Platform.MACOS and autostart.autostart_enabled(env)

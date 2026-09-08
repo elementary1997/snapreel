@@ -388,11 +388,11 @@ def test_the_theme_is_offered_in_words():
 # --- обновление -----------------------------------------------------------
 
 
-def _panel(tmp_path, on_restart=None):
+def _panel(tmp_path, on_restart=None, on_installed=None):
     from snapreel import theme
     from snapreel.settings_ui import UpdatePanel
 
-    return UpdatePanel(tmp_path / "config.toml", theme.LIGHT, on_restart)
+    return UpdatePanel(tmp_path / "config.toml", theme.LIGHT, on_restart, on_installed)
 
 
 def test_a_finished_update_turns_the_button_into_a_restart(qt_app, tmp_path):
@@ -406,6 +406,26 @@ def test_a_finished_update_turns_the_button_into_a_restart(qt_app, tmp_path):
     assert panel.button.text() == "Перезапустить snapreel"
     assert "перезапустить" in panel.status.text().lower()
     assert asked == [True]
+
+
+def test_the_panel_tells_the_tray_what_it_installed(qt_app, tmp_path):
+    """Пункт «Перезапустить» один на приложение, а ставят и отсюда тоже."""
+    from snapreel.updates import Release
+
+    release = Release(
+        version=(9, 9, 9),
+        tag="v9.9.9",
+        asset="snapreel-linux-x86_64",
+        url="https://example.invalid/snapreel",
+        checksums_url=None,
+        size=1024,
+    )
+    seen = []
+    panel = _panel(tmp_path, on_restart=lambda: None, on_installed=seen.append)
+
+    panel._finish("install", release, "")
+
+    assert seen == [release]
 
 
 def test_without_a_tray_there_is_nothing_to_restart(qt_app, tmp_path):

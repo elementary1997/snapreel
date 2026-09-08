@@ -318,6 +318,9 @@ class UpdatePanel(QWidget):
     `on_restart` — кому передать просьбу подняться заново: поставленная
     версия лежит на диске, а работает всё ещё прежняя, и перезапуск делает
     тот, кто окно открыл (трей). Без него кнопке превращаться не во что.
+    `on_installed` — кому сказать, что версия поставлена: пункт
+    «Перезапустить» один на приложение, и меню иконки должно узнать о ней
+    даже тогда, когда окно просто закрыли, не нажав кнопку.
     """
 
     def __init__(
@@ -325,6 +328,7 @@ class UpdatePanel(QWidget):
         config_path: Path | None,
         palette: theme.Palette,
         on_restart=None,
+        on_installed=None,
     ):
         super().__init__()
         from . import __version__
@@ -332,6 +336,7 @@ class UpdatePanel(QWidget):
         self._config_path = config_path
         self._palette = palette
         self._on_restart = on_restart
+        self._on_installed = on_installed
         self._release = None
         self._thread: QThread | None = None
         self._worker: _UpdateWorker | None = None
@@ -394,6 +399,9 @@ class UpdatePanel(QWidget):
             self._say(error, bad=True)
             return
         if what == "install":
+            installed = release or self._release
+            if self._on_installed is not None and installed is not None:
+                self._on_installed(installed)
             if self._on_restart is None:
                 self._say("Обновлено. Заработает при следующем запуске.", ok=True)
                 self._rebind("Проверить обновления", self.check)
@@ -429,6 +437,7 @@ class SettingsWindow(QDialog):
         path: Path | None = None,
         hotkey_note: str | None = None,
         on_restart=None,
+        on_installed=None,
     ):
         super().__init__()
         self.config = config
@@ -437,6 +446,9 @@ class SettingsWindow(QDialog):
         # кому отдать просьбу подняться заново после обновления; None —
         # окно открыли само по себе, и перезапускать нечего
         self._on_restart = on_restart
+        # кому сказать, что обновление поставлено: пункт «Перезапустить»
+        # в меню иконки один на приложение, и ставят не только отсюда
+        self._on_installed = on_installed
         # чем кончилась привязка у того, кто окно открыл: трей знает это
         # точно, а окно само проверить не может — комбинации уже заняты им
         self.hotkey_note = hotkey_note
@@ -531,7 +543,10 @@ class SettingsWindow(QDialog):
         if group.title == UPDATE_GROUP:
             column.addWidget(_divider())
             self.updates = UpdatePanel(
-                self.path, self.palette, self._restart if self._on_restart else None
+                self.path,
+                self.palette,
+                self._restart if self._on_restart else None,
+                self._on_installed,
             )
             column.addWidget(self.updates)
 
@@ -738,16 +753,18 @@ def open_settings(
     path: Path | None = None,
     hotkey_note: str | None = None,
     on_restart=None,
+    on_installed=None,
 ) -> bool:
     """Показывает окно настроек. True — пользователь сохранил изменения.
 
     Диалог крутит свой цикл событий: так окно ждёт человека и в одиночном
-    запуске, и внутри трея, где цикл уже идёт. `on_restart` есть только у
-    второго: поставленное обновление поднимает трей, а не окно.
+    запуске, и внутри трея, где цикл уже идёт. `on_restart` и `on_installed`
+    есть только у второго: поставленное обновление поднимает трей, а не окно,
+    и пункт «Перезапустить» тоже живёт у него.
     """
     from .qt import application
 
     application(config)
-    window = SettingsWindow(config, path, hotkey_note, on_restart)
+    window = SettingsWindow(config, path, hotkey_note, on_restart, on_installed)
     window.exec()
     return window.saved

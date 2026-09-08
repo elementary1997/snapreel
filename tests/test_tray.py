@@ -183,7 +183,9 @@ def test_no_recording_starts_over_the_settings_window(tray_app, monkeypatch):
     """Окно настроек модально: оверлей поверх него не получил бы ни мыши, ни Esc."""
     monkeypatch.setattr(
         "snapreel.settings_ui.open_settings",
-        lambda config, path=None, hotkey_note=None, on_restart=None: tray_app.app.record(),
+        lambda config, path=None, hotkey_note=None, on_restart=None, on_installed=None: (
+            tray_app.app.record()
+        ),
     )
 
     tray_app.app.open_settings()
@@ -243,7 +245,9 @@ def test_the_settings_window_takes_the_hotkeys_off(tray_app, monkeypatch):
     monkeypatch.setattr(tray_app.app, "unbind_hotkeys", lambda: bound.append("off"))
     monkeypatch.setattr(
         "snapreel.settings_ui.open_settings",
-        lambda config, path=None, hotkey_note=None, on_restart=None: bound.append("окно"),
+        lambda config, path=None, hotkey_note=None, on_restart=None, on_installed=None: (
+            bound.append("окно")
+        ),
     )
 
     tray_app.app.open_settings()
@@ -320,7 +324,9 @@ def test_settings_open_in_the_same_process(tray_app, monkeypatch):
     opened = []
     monkeypatch.setattr(
         "snapreel.settings_ui.open_settings",
-        lambda config, path=None, hotkey_note=None, on_restart=None: opened.append(path) or True,
+        lambda config, path=None, hotkey_note=None, on_restart=None, on_installed=None: (
+            opened.append(path) or True
+        ),
     )
 
     tray_app.app.open_settings()
@@ -333,7 +339,7 @@ def test_a_second_settings_window_does_not_open(tray_app, monkeypatch):
     """Пункт меню выключен, пока окно открыто, и второе окно не заводится."""
     seen = []
 
-    def once(config, path=None, hotkey_note=None, on_restart=None):
+    def once(config, path=None, hotkey_note=None, on_restart=None, on_installed=None):
         seen.append(tray_app.item("settings").enabled)  # каким пункт виден изнутри
         tray_app.app.open_settings()  # повторное нажатие, пока окно открыто
         return True
@@ -347,7 +353,7 @@ def test_a_second_settings_window_does_not_open(tray_app, monkeypatch):
 
 
 def test_a_broken_settings_window_does_not_take_down_the_tray(tray_app, monkeypatch):
-    def explode(config, path=None, hotkey_note=None, on_restart=None):
+    def explode(config, path=None, hotkey_note=None, on_restart=None, on_installed=None):
         raise RuntimeError("окно не собралось")
 
     monkeypatch.setattr("snapreel.settings_ui.open_settings", explode)
@@ -522,6 +528,27 @@ def test_a_restart_is_not_offered_during_a_recording(tray_app, monkeypatch):
     tray_app.app._busy = True
 
     assert not tray_app.item("restart").enabled
+
+
+def test_an_update_installed_from_the_window_reaches_the_menu(tray_app, monkeypatch):
+    """Ставят из двух мест, а пункт «Перезапустить» один на приложение.
+
+    Закрыв окно и не нажав в нём кнопку, человек искал бы перезапуск в меню —
+    и находил там «Обновить до 9.9.9», то есть предложение поставить ту же
+    версию заново.
+    """
+    monkeypatch.setattr(tray.updates, "supported", lambda: True)
+    tray_app.app._release = RELEASE
+
+    def window(config, path=None, hotkey_note=None, on_restart=None, on_installed=None):
+        on_installed(RELEASE)  # кнопку «Обновить» нажали в окне и закрыли его
+
+    monkeypatch.setattr("snapreel.settings_ui.open_settings", window)
+
+    tray_app.app.open_settings()
+
+    assert tray_app.item("restart").label == "Перезапустить snapreel 9.9.9"
+    assert "update" not in tray_app.keys()
 
 
 def test_a_restart_goes_out_before_it_comes_back(tray_app):
@@ -802,8 +829,8 @@ def test_the_settings_window_hears_about_that_refusal(tray_app, monkeypatch):
     seen = {}
     monkeypatch.setattr(
         "snapreel.settings_ui.open_settings",
-        lambda config, path=None, hotkey_note=None, on_restart=None: seen.setdefault(
-            "нота", hotkey_note
+        lambda config, path=None, hotkey_note=None, on_restart=None, on_installed=None: (
+            seen.setdefault("нота", hotkey_note)
         ),
     )
     tray_app.app._hotkey_problem = "комбинацию уже кто-то держит"

@@ -240,6 +240,31 @@ def test_a_restart_starts_the_binary_that_took_our_place(frozen, monkeypatch):
     assert spawned == [[str(frozen.resolve()), "tray"]]
 
 
+def test_a_restart_on_macos_leaves_the_job_to_launchd(frozen, monkeypatch):
+    """У LaunchAgent стоит KeepAlive: launchd вернёт трей сам.
+
+    Своя копия оказалась бы второй — две иконки в строке меню и общая драка
+    за комбинации.
+    """
+    spawned = []
+    monkeypatch.setattr(install.subprocess, "Popen", lambda argv, **kwargs: spawned.append(argv))
+    agent = install.Path.home() / "Library" / "LaunchAgents" / "com.snapreel.daemon.plist"
+    agent.parent.mkdir(parents=True)
+    agent.write_text("plist", encoding="utf-8")
+
+    assert install.relaunch(MACOS)
+    assert spawned == []
+
+
+def test_without_a_launch_agent_macos_starts_the_copy_itself(frozen, monkeypatch):
+    """Поднимать некому: автозапуск не прописан, launchd про нас не знает."""
+    spawned = []
+    monkeypatch.setattr(install.subprocess, "Popen", lambda argv, **kwargs: spawned.append(argv))
+
+    assert install.relaunch(MACOS)
+    assert spawned == [[str(frozen.resolve()), "tray"]]
+
+
 def test_a_source_install_has_nothing_to_relaunch(monkeypatch):
     """`sys.executable` там — интерпретатор: подниматься по нему нечему."""
     monkeypatch.delattr(install.sys, "frozen", raising=False)

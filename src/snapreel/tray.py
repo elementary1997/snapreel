@@ -344,6 +344,10 @@ class TrayApp:
                 # «Перезапустить»: поднять новую версию умеет только трей —
                 # окно модально и живёт внутри его цикла событий
                 on_restart=self.restart if updates.supported() else None,
+                # поставить обновление можно и из окна: без этого меню
+                # предлагало бы поставить ту же версию заново, а пункта
+                # «Перезапустить» человек, закрывший окно, уже не нашёл бы
+                on_installed=self.remember_installed,
             )
         except Exception as exc:  # окно не должно уносить с собой иконку
             self._notify("snapreel", f"не открыть настройки: {exc}")
@@ -454,11 +458,21 @@ class TrayApp:
             self._release = release  # не поставилось — пункт меню возвращается
             self._notify("snapreel", f"обновление не удалось: {exc}")
         else:
-            self._installed = release
+            self.remember_installed(release)
             self._notify(
                 "snapreel",
                 f"обновлено до {release.name} — «Перезапустить» в меню иконки поднимет её",
             )
+        self.refresh()
+
+    def remember_installed(self, release: updates.Release) -> None:
+        """Запоминает поставленную версию, кем бы она ни была поставлена.
+
+        Ставят из двух мест — из меню и кнопкой в окне настроек, — а пункт
+        «Перезапустить» один на приложение: состояние обязано быть общим.
+        """
+        self._installed = release
+        self._release = None
         self.refresh()
 
     def watch_updates(self) -> None:

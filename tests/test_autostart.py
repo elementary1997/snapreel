@@ -235,15 +235,47 @@ def test_the_clicked_shortcut_is_rewritten_from_scratch(monkeypatch, tmp_path):
     assert not old.exists()  # его пересоздаст powershell, уже с целью «трей»
 
 
-def test_removing_takes_both_shortcuts(monkeypatch, tmp_path):
+def test_removing_the_hotkey_keeps_the_shortcut_people_open(monkeypatch, tmp_path):
+    """Снявший комбинацию не просил убирать «Snapreel» из «Пуска».
+
+    Но и оставить как есть нельзя: на машинах, где ярлык был один, комбинацию
+    носит как раз он. Поэтому он переписывается на трей — прежнее свойство
+    Hotkey уходит вместе с файлом.
+    """
     programs = tmp_path / "Programs"
     programs.mkdir()
     monkeypatch.setattr(autostart, "windows_programs_path", lambda: programs)
+    scripts: list[str] = []
+    monkeypatch.setattr(autostart, "_powershell", scripts.append)
     for name in (autostart.SHORTCUT_NAME, autostart.RECORD_SHORTCUT_NAME):
         (programs / name).write_text("ярлык", encoding="utf-8")
 
-    assert autostart.remove(WINDOWS).ok
-    assert list(programs.iterdir()) == []
+    outcome = autostart.remove(WINDOWS)
+
+    assert outcome.ok
+    assert not (programs / autostart.RECORD_SHORTCUT_NAME).exists()
+    assert len(scripts) == 1
+    assert autostart.SHORTCUT_NAME in scripts[0]
+    assert "tray" in scripts[0]
+    assert "$link.Hotkey" not in scripts[0]  # комбинации на нём больше нет
+
+
+def test_a_shortcut_that_could_not_be_rewritten_is_not_passed_off_as_success(monkeypatch, tmp_path):
+    """Файл уже убран, а вернуть не вышло — человек ищет «Snapreel» и не находит."""
+    programs = tmp_path / "Programs"
+    programs.mkdir()
+    monkeypatch.setattr(autostart, "windows_programs_path", lambda: programs)
+
+    def refuse(script: str) -> None:
+        raise autostart.HotkeySetupError("powershell вернул ошибку")
+
+    monkeypatch.setattr(autostart, "_powershell", refuse)
+    (programs / autostart.SHORTCUT_NAME).write_text("ярлык", encoding="utf-8")
+
+    outcome = autostart.remove(WINDOWS)
+
+    assert not outcome.ok
+    assert "hotkey set" in outcome.message
 
 
 def test_removing_nothing_is_not_a_failure(monkeypatch, tmp_path):
