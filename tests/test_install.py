@@ -230,6 +230,23 @@ def test_macos_does_not_start_a_second_copy(frozen, monkeypatch):
     assert spawned  # без автозапуска поднимать копию всё-таки нам
 
 
+def test_a_restart_starts_the_binary_that_took_our_place(frozen, monkeypatch):
+    """После обновления новый файл лежит по нашему же пути — его и поднимаем."""
+    spawned = []
+    monkeypatch.setattr(install.subprocess, "Popen", lambda argv, **kwargs: spawned.append(argv))
+
+    assert install.relaunch(LINUX)
+
+    assert spawned == [[str(frozen.resolve()), "tray"]]
+
+
+def test_a_source_install_has_nothing_to_relaunch(monkeypatch):
+    """`sys.executable` там — интерпретатор: подниматься по нему нечему."""
+    monkeypatch.delattr(install.sys, "frozen", raising=False)
+
+    assert install.relaunch(LINUX) is False
+
+
 def test_removing_itself_is_left_to_a_process_that_outlives_us(frozen, monkeypatch):
     """Бутлоадер PyInstaller не находит свой файл и пугает человека по-английски."""
     monkeypatch.setattr(

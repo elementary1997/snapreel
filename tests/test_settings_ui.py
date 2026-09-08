@@ -383,3 +383,52 @@ def test_the_theme_is_offered_in_words():
 
     assert dict(theme.labels)["auto"] == "Как в системе"
     assert set(dict(theme.labels)) == set(theme.choices)
+
+
+# --- обновление -----------------------------------------------------------
+
+
+def _panel(tmp_path, on_restart=None):
+    from snapreel import theme
+    from snapreel.settings_ui import UpdatePanel
+
+    return UpdatePanel(tmp_path / "config.toml", theme.LIGHT, on_restart)
+
+
+def test_a_finished_update_turns_the_button_into_a_restart(qt_app, tmp_path):
+    """Скачанное лежит на диске, а работает прежняя версия — остался один щелчок."""
+    asked = []
+    panel = _panel(tmp_path, on_restart=lambda: asked.append(True))
+
+    panel._finish("install", None, "")
+    panel.button.click()
+
+    assert panel.button.text() == "Перезапустить snapreel"
+    assert "перезапустить" in panel.status.text().lower()
+    assert asked == [True]
+
+
+def test_without_a_tray_there_is_nothing_to_restart(qt_app, tmp_path):
+    """Окно, открытое само по себе, живёт до закрытия: перезапускать нечего."""
+    panel = _panel(tmp_path)
+
+    panel._finish("install", None, "")
+
+    assert panel.button.text() == "Проверить обновления"
+
+
+def test_the_restart_button_closes_the_window_first(qt_app, tmp_path):
+    """Окно модально: поднимать новую копию поверх него нечему."""
+    from snapreel.settings_ui import SettingsWindow
+
+    seen = []
+    window = SettingsWindow(
+        Config(), tmp_path / "config.toml", None, lambda: seen.append("просьба")
+    )
+    window.show()
+
+    window._restart()
+
+    assert not window.isVisible()  # закрылись раньше, чем позвали трей
+    assert seen == ["просьба"]
+    window.deleteLater()

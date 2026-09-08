@@ -183,7 +183,7 @@ def test_no_recording_starts_over_the_settings_window(tray_app, monkeypatch):
     """Окно настроек модально: оверлей поверх него не получил бы ни мыши, ни Esc."""
     monkeypatch.setattr(
         "snapreel.settings_ui.open_settings",
-        lambda config, path=None, hotkey_note=None: tray_app.app.record(),
+        lambda config, path=None, hotkey_note=None, on_restart=None: tray_app.app.record(),
     )
 
     tray_app.app.open_settings()
@@ -243,7 +243,7 @@ def test_the_settings_window_takes_the_hotkeys_off(tray_app, monkeypatch):
     monkeypatch.setattr(tray_app.app, "unbind_hotkeys", lambda: bound.append("off"))
     monkeypatch.setattr(
         "snapreel.settings_ui.open_settings",
-        lambda config, path=None, hotkey_note=None: bound.append("окно"),
+        lambda config, path=None, hotkey_note=None, on_restart=None: bound.append("окно"),
     )
 
     tray_app.app.open_settings()
@@ -320,7 +320,7 @@ def test_settings_open_in_the_same_process(tray_app, monkeypatch):
     opened = []
     monkeypatch.setattr(
         "snapreel.settings_ui.open_settings",
-        lambda config, path=None, hotkey_note=None: opened.append(path) or True,
+        lambda config, path=None, hotkey_note=None, on_restart=None: opened.append(path) or True,
     )
 
     tray_app.app.open_settings()
@@ -333,7 +333,7 @@ def test_a_second_settings_window_does_not_open(tray_app, monkeypatch):
     """Пункт меню выключен, пока окно открыто, и второе окно не заводится."""
     seen = []
 
-    def once(config, path=None, hotkey_note=None):
+    def once(config, path=None, hotkey_note=None, on_restart=None):
         seen.append(tray_app.item("settings").enabled)  # каким пункт виден изнутри
         tray_app.app.open_settings()  # повторное нажатие, пока окно открыто
         return True
@@ -347,7 +347,7 @@ def test_a_second_settings_window_does_not_open(tray_app, monkeypatch):
 
 
 def test_a_broken_settings_window_does_not_take_down_the_tray(tray_app, monkeypatch):
-    def explode(config, path=None, hotkey_note=None):
+    def explode(config, path=None, hotkey_note=None, on_restart=None):
         raise RuntimeError("окно не собралось")
 
     monkeypatch.setattr("snapreel.settings_ui.open_settings", explode)
@@ -496,6 +496,45 @@ def test_a_failed_install_keeps_the_update_offered(tray_app, monkeypatch):
     assert any("обновление не удалось" in note for note in tray_app.notes)
 
 
+def test_a_finished_update_offers_a_restart(tray_app, monkeypatch):
+    """Новая версия уже на диске, а работает прежняя: остаться должен один шаг."""
+    monkeypatch.setattr(tray.updates, "supported", lambda: True)
+    monkeypatch.setattr(tray.updates, "check", lambda directory, force=False: RELEASE)
+    monkeypatch.setattr(tray.updates, "update", lambda release, progress=None: None)
+
+    tray_app.app.check_updates()
+    tray_app.app.join()
+    tray_app.app.install_update()
+    tray_app.app.join()
+
+    assert tray_app.item("restart").label == "Перезапустить snapreel 9.9.9"
+    assert tray_app.app.installed is RELEASE
+    assert any("Перезапустить" in note for note in tray_app.notes)
+
+
+def test_a_restart_is_not_offered_during_a_recording(tray_app, monkeypatch):
+    """Перезапуск посреди записи унёс бы клип вместе с ffmpeg."""
+    monkeypatch.setattr(tray.updates, "supported", lambda: True)
+    monkeypatch.setattr(tray.updates, "update", lambda release, progress=None: None)
+    tray_app.app._release = RELEASE
+    tray_app.app.install_update()
+    tray_app.app.join()
+    tray_app.app._busy = True
+
+    assert not tray_app.item("restart").enabled
+
+
+def test_a_restart_goes_out_before_it_comes_back(tray_app):
+    """Сначала гаснем, поднимаемся потом: две копии дрались бы за комбинации."""
+    icon = FakeIcon()
+    tray_app.app.attach(icon)
+
+    tray_app.app.restart()
+
+    assert icon.stopped == 1
+    assert tray_app.app.restart_requested
+
+
 # --- меню и иконка Qt -------------------------------------------------------
 
 
@@ -604,6 +643,63 @@ def test_the_tray_does_not_leave_before_the_packing_is_done(monkeypatch, tmp_pat
     assert packed == ["в буфере"]
 
 
+def test_the_new_version_is_started_only_after_we_are_gone(monkeypatch, tmp_path, need):
+    """Копия поднимается последней: комбинации к этому времени уже отпущены."""
+    need("PySide6")
+    from PySide6.QtWidgets import QApplication, QSystemTrayIcon
+
+    QApplication.instance() or QApplication([])
+    monkeypatch.setattr(QSystemTrayIcon, "isSystemTrayAvailable", staticmethod(lambda: True))
+    monkeypatch.setattr(tray.TrayApp, "bind_hotkeys", lambda self: None)
+    monkeypatch.setattr(tray.TrayApp, "watch_updates", lambda self: None)
+    monkeypatch.setattr(
+        "snapreel.qt.application", lambda config=None: (QApplication.instance(), False)
+    )
+    order: list[str] = []
+    monkeypatch.setattr(
+        tray.TrayApp, "unbind_hotkeys", lambda self: order.append("комбинации отпущены")
+    )
+    monkeypatch.setattr(
+        tray.install, "relaunch", lambda env=None: order.append("новая поднята") or True
+    )
+    made: list = []
+    monkeypatch.setattr(tray.TrayApp, "greet", lambda self: made.append(self))
+
+    def exec_(self):
+        """Пока крутился цикл, человек выбрал в меню «Перезапустить»."""
+        made[0].restart()
+        return 0
+
+    monkeypatch.setattr(QApplication, "exec", exec_)
+
+    assert tray.run(Config(), tmp_path / "c.toml", ENV) == 0
+    assert order.count("новая поднята") == 1
+    assert order[-1] == "новая поднята"
+
+
+def test_a_plain_exit_starts_nothing(monkeypatch, tmp_path, need):
+    """«Выйти» — это выйти: поднимать себя заново трей не вправе."""
+    need("PySide6")
+    from PySide6.QtWidgets import QApplication, QSystemTrayIcon
+
+    QApplication.instance() or QApplication([])
+    monkeypatch.setattr(QSystemTrayIcon, "isSystemTrayAvailable", staticmethod(lambda: True))
+    monkeypatch.setattr(tray.TrayApp, "bind_hotkeys", lambda self: None)
+    monkeypatch.setattr(tray.TrayApp, "watch_updates", lambda self: None)
+    monkeypatch.setattr(tray.TrayApp, "greet", lambda self: None)
+    monkeypatch.setattr(
+        "snapreel.qt.application", lambda config=None: (QApplication.instance(), False)
+    )
+    monkeypatch.setattr(
+        tray.install,
+        "relaunch",
+        lambda env=None: pytest.fail("иконку погасили, а не перезапустили"),
+    )
+    monkeypatch.setattr(QApplication, "exec", lambda self: 0)
+
+    assert tray.run(Config(), tmp_path / "c.toml", ENV) == 0
+
+
 def test_a_session_without_a_tray_is_explained(monkeypatch, capsys, tmp_path, need):
     """Qt отвечает честно: трея в сессии нет — говорим об этом и живём дальше."""
     need("PySide6")
@@ -706,7 +802,9 @@ def test_the_settings_window_hears_about_that_refusal(tray_app, monkeypatch):
     seen = {}
     monkeypatch.setattr(
         "snapreel.settings_ui.open_settings",
-        lambda config, path=None, hotkey_note=None: seen.setdefault("нота", hotkey_note),
+        lambda config, path=None, hotkey_note=None, on_restart=None: seen.setdefault(
+            "нота", hotkey_note
+        ),
     )
     tray_app.app._hotkey_problem = "комбинацию уже кто-то держит"
 

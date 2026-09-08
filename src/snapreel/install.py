@@ -175,3 +175,19 @@ def launch(target: Path, env: Environment | None = None, autostarted: bool = Fal
     except OSError:
         return False
     return True
+
+
+def relaunch(env: Environment | None = None) -> bool:
+    """Поднимает snapreel заново — по тому же пути, где лежим сами.
+
+    Нужна после обновления: новый бинарник уже занял место старого, и запуск
+    по своему же пути поднимает именно его. Из исходников перезапускать
+    нечего — там `sys.executable` это интерпретатор, а не snapreel.
+
+    Зовётся последней, когда прежний процесс уже погасил иконку и отпустил
+    комбинации: две живые копии дрались бы за них, а на X11 вторая просто не
+    получила бы захвата.
+    """
+    if not supported():
+        return False
+    return launch(Path(sys.executable).resolve(), env)

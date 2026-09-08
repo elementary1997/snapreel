@@ -313,14 +313,25 @@ class _UpdateWorker(QObject):
 
 
 class UpdatePanel(QWidget):
-    """Версия, проверка и установка обновления одной кнопкой."""
+    """Версия, проверка и установка обновления одной кнопкой.
 
-    def __init__(self, config_path: Path | None, palette: theme.Palette):
+    `on_restart` — кому передать просьбу подняться заново: поставленная
+    версия лежит на диске, а работает всё ещё прежняя, и перезапуск делает
+    тот, кто окно открыл (трей). Без него кнопке превращаться не во что.
+    """
+
+    def __init__(
+        self,
+        config_path: Path | None,
+        palette: theme.Palette,
+        on_restart=None,
+    ):
         super().__init__()
         from . import __version__
 
         self._config_path = config_path
         self._palette = palette
+        self._on_restart = on_restart
         self._release = None
         self._thread: QThread | None = None
         self._worker: _UpdateWorker | None = None
@@ -383,8 +394,15 @@ class UpdatePanel(QWidget):
             self._say(error, bad=True)
             return
         if what == "install":
-            self._say("Обновлено. Заработает при следующем запуске.", ok=True)
-            self._rebind("Проверить обновления", self.check)
+            if self._on_restart is None:
+                self._say("Обновлено. Заработает при следующем запуске.", ok=True)
+                self._rebind("Проверить обновления", self.check)
+                return
+            # версия скачана и лежит на месте, а в памяти всё ещё прежняя:
+            # предложить один щелчок честнее, чем отправить человека
+            # закрывать и открывать программу самому
+            self._say("Обновлено. Осталось перезапустить.", ok=True)
+            self._rebind("Перезапустить snapreel", self._on_restart)
             return
         if release is None:
             self._say("Установлена последняя версия", ok=True)
@@ -405,11 +423,20 @@ class UpdatePanel(QWidget):
 class SettingsWindow(QDialog):
     """Окно целиком: разделы слева, строки настроек справа, сохранение внизу."""
 
-    def __init__(self, config: Config, path: Path | None = None, hotkey_note: str | None = None):
+    def __init__(
+        self,
+        config: Config,
+        path: Path | None = None,
+        hotkey_note: str | None = None,
+        on_restart=None,
+    ):
         super().__init__()
         self.config = config
         self.path = path
         self.saved = False
+        # кому отдать просьбу подняться заново после обновления; None —
+        # окно открыли само по себе, и перезапускать нечего
+        self._on_restart = on_restart
         # чем кончилась привязка у того, кто окно открыл: трей знает это
         # точно, а окно само проверить не может — комбинации уже заняты им
         self.hotkey_note = hotkey_note
@@ -503,12 +530,24 @@ class SettingsWindow(QDialog):
 
         if group.title == UPDATE_GROUP:
             column.addWidget(_divider())
-            self.updates = UpdatePanel(self.path, self.palette)
+            self.updates = UpdatePanel(
+                self.path, self.palette, self._restart if self._on_restart else None
+            )
             column.addWidget(self.updates)
 
         column.addStretch(1)
         area.setWidget(page)
         return area
+
+    def _restart(self) -> None:
+        """Сначала закрыть окно, потом просить о перезапуске.
+
+        Окно модально на всё приложение, и подниматься заново поверх него
+        нечему: просьбу исполняет тот, кто окно открыл.
+        """
+        self.close()
+        if self._on_restart is not None:
+            self._on_restart()
 
     def _row(self, field: settings.Field, value) -> QWidget:
         """Строка настройки: слева название и пояснение, справа контрол."""
@@ -694,15 +733,21 @@ def _first_group_with(errors: dict[str, str]) -> str:
     return settings.GROUPS[0].title
 
 
-def open_settings(config: Config, path: Path | None = None, hotkey_note: str | None = None) -> bool:
+def open_settings(
+    config: Config,
+    path: Path | None = None,
+    hotkey_note: str | None = None,
+    on_restart=None,
+) -> bool:
     """Показывает окно настроек. True — пользователь сохранил изменения.
 
     Диалог крутит свой цикл событий: так окно ждёт человека и в одиночном
-    запуске, и внутри трея, где цикл уже идёт.
+    запуске, и внутри трея, где цикл уже идёт. `on_restart` есть только у
+    второго: поставленное обновление поднимает трей, а не окно.
     """
     from .qt import application
 
     application(config)
-    window = SettingsWindow(config, path, hotkey_note)
+    window = SettingsWindow(config, path, hotkey_note, on_restart)
     window.exec()
     return window.saved

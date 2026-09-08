@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import autostart, notify, resources, updates
+from . import autostart, install, notify, resources, updates
 from . import config as config_module
 from .config import Config
 from .errors import OverlayUnavailable, SelectionCancelled, TrayUnavailable
@@ -80,6 +80,8 @@ class TrayApp:
         self._hotkey_problem: str | None = None  # почему комбинации не встали
         self._listener = None
         self._release: updates.Release | None = None
+        self._installed: updates.Release | None = None  # поставлено, ждёт перезапуска
+        self._restart = False  # выходим, чтобы подняться заново
         self._icon = None
         self._stopping = threading.Event()
         self._threads: list[threading.Thread] = []
@@ -104,6 +106,16 @@ class TrayApp:
     def release(self) -> updates.Release | None:
         """Найденный релиз новее текущего, если проверка его нашла."""
         return self._release
+
+    @property
+    def installed(self) -> updates.Release | None:
+        """Скачанная и поставленная версия, которая заработает после перезапуска."""
+        return self._installed
+
+    @property
+    def restart_requested(self) -> bool:
+        """Гаснем ли мы затем, чтобы подняться заново."""
+        return self._restart
 
     def title(self) -> str:
         from . import __version__
@@ -145,7 +157,19 @@ class TrayApp:
                 checked=autostart.autostart_enabled(self.env),
             ),
         ]
-        if self._release is not None:
+        if self._installed is not None:
+            # новая версия уже лежит на диске, а работает всё ещё старая:
+            # человеку остаётся один шаг, и делать этот шаг самому — искать
+            # ярлык, гадать, поднялась ли новая — не его работа
+            items.append(
+                Item(
+                    "restart",
+                    f"Перезапустить snapreel {self._installed.name}",
+                    self.restart,
+                    enabled=not busy,
+                )
+            )
+        elif self._release is not None:
             items.append(Item("update", f"Обновить до {self._release.name}", self.install_update))
         elif updates.supported():
             items.append(Item("update", "Проверить обновления", self.check_updates))
@@ -312,11 +336,21 @@ class TrayApp:
         try:
             from .settings_ui import open_settings
 
-            open_settings(self.config, self.config_path, hotkey_note=self._hotkey_problem)
+            open_settings(
+                self.config,
+                self.config_path,
+                hotkey_note=self._hotkey_problem,
+                # обновиться можно и отсюда, и тогда кнопка становится
+                # «Перезапустить»: поднять новую версию умеет только трей —
+                # окно модально и живёт внутри его цикла событий
+                on_restart=self.restart if updates.supported() else None,
+            )
         except Exception as exc:  # окно не должно уносить с собой иконку
             self._notify("snapreel", f"не открыть настройки: {exc}")
         finally:
             self._window_open = False
+        if self._restart:
+            return  # приложение уже гасится: перевешивать комбинации незачем
         self.reload()  # заодно вешает комбинации обратно — уже новые
 
     def reload(self) -> None:
@@ -335,8 +369,8 @@ class TrayApp:
 
     def toggle_autostart(self) -> None:
         enabled = autostart.autostart_enabled(self.env)
-        install = autostart.install_autostart
-        outcome = autostart.remove_autostart(self.env) if enabled else install(self.env)
+        add = autostart.install_autostart
+        outcome = autostart.remove_autostart(self.env) if enabled else add(self.env)
         if not outcome.ok:
             self._notify("snapreel", outcome.message)
         self.refresh()
@@ -420,7 +454,11 @@ class TrayApp:
             self._release = release  # не поставилось — пункт меню возвращается
             self._notify("snapreel", f"обновление не удалось: {exc}")
         else:
-            self._notify("snapreel", f"обновлено до {release.name} — начнёт работать при запуске")
+            self._installed = release
+            self._notify(
+                "snapreel",
+                f"обновлено до {release.name} — «Перезапустить» в меню иконки поднимет её",
+            )
         self.refresh()
 
     def watch_updates(self) -> None:
@@ -452,6 +490,17 @@ class TrayApp:
         except OSError:
             return
         self._notify("snapreel", "работает в трее — настройки в меню иконки")
+
+    def restart(self) -> None:
+        """Гасит иконку затем, чтобы подняться заново уже новой версией.
+
+        Сам запуск делается после выхода из цикла событий (`run`), а не
+        здесь: две копии разом дрались бы за комбинации, а на X11 вторая и
+        вовсе осталась бы без них — прежний захват сервер отпускает не в тот
+        же миг. Начатую запись это не обрывает, о ней позаботится `quit`.
+        """
+        self._restart = True
+        self.quit()
 
     def quit(self) -> None:
         """Гасит иконку, но не бросает начатое.
@@ -611,6 +660,13 @@ def run(config: Config, path: Path | None = None, env: Environment | None = None
         # процесс дождётся сам, поток не демонский, и буфер передаст она же
         app.join(timeout=PACKING_WAIT)
         app.hand_over_clipboard()
+        if app.restart_requested and not install.relaunch(app.env):
+            # сказать больше некому: иконки уже нет, а у оконной сборки
+            # Windows этот поток никто не читает — но и молчать нельзя
+            print(
+                "snapreel: новую версию не поднять — запустите snapreel сами",
+                file=sys.stderr,
+            )
     return 0
 
 
