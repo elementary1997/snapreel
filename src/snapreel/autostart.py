@@ -28,7 +28,12 @@ GNOME_PATH = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/s
 # Имя агента осталось от демона: переименование бросило бы уже прописанный
 # у людей plist в системе, а убрать его умеет только тот, кто знает имя.
 LAUNCH_AGENT = "com.snapreel.daemon"
+# Ярлык в «Пуске», который человек открывает руками: он поднимает иконку в
+# трее. Комбинацию носит второй, отдельный — Windows слушает свойство Hotkey
+# только у ярлыков «Пуска», а открывать его щелчком никто не должен: щелчок
+# по нему начинал бы запись вместо того, чтобы показать иконку.
 SHORTCUT_NAME = "Snapreel.lnk"
+RECORD_SHORTCUT_NAME = "Snapreel Record.lnk"
 # Имена ярлыков — только латиницей. COM-объект WScript.Shell, которым они
 # создаются, переводит путь в кодировку системы: на английской Windows
 # кириллица становится «?», а такое имя файла Windows не принимает, и
@@ -323,8 +328,18 @@ def _gnome_remove() -> Outcome:
 
 
 def windows_shortcut_path() -> Path:
+    """Ярлык «Snapreel» в «Пуске»: его открывают, и он поднимает иконку."""
+    return windows_programs_path() / SHORTCUT_NAME
+
+
+def windows_record_shortcut_path() -> Path:
+    """Ярлык, который носит комбинацию: Windows слушает Hotkey только в «Пуске»."""
+    return windows_programs_path() / RECORD_SHORTCUT_NAME
+
+
+def windows_programs_path() -> Path:
     base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
-    return base / "Microsoft" / "Windows" / "Start Menu" / "Programs" / SHORTCUT_NAME
+    return base / "Microsoft" / "Windows" / "Start Menu" / "Programs"
 
 
 def windows_startup_paths() -> list[Path]:
@@ -428,22 +443,45 @@ def _powershell(script: str) -> None:
 
 
 def _windows_install(hotkey: str) -> Outcome:
+    """Два ярлыка: один носит комбинацию, второй открывает иконку.
+
+    Раньше он был один — `Snapreel.lnk` с запуском записи, — и в «Пуске»
+    человек видел ровно одно «Snapreel». Открыв его, он получал выделение
+    области вместо иконки в трее и решал, что программа не запускается.
+    Свести оба дела в один ярлык нельзя: цель у него одна, а Windows слушает
+    свойство Hotkey только у ярлыков «Пуска».
+    """
+    record = windows_record_shortcut_path()
+    record.parent.mkdir(parents=True, exist_ok=True)
+    _powershell(windows_shortcut_script(record, hotkey))
+
+    # прежний `Snapreel.lnk` начинал запись, а щёлкают именно по нему.
+    # Переписываем на трей — и сначала убираем: `CreateShortcut` открывает
+    # существующий файл, и прежнее свойство Hotkey осталось бы на нём, то
+    # есть комбинация поднимала бы иконку вместо записи. Комбинация к этому
+    # моменту уже живёт на своём ярлыке, и потерять её эта уборка не может
     path = windows_shortcut_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _powershell(windows_shortcut_script(path, hotkey))
+    _drop(path)
+    _powershell(
+        windows_shortcut_script(path, argv=tray_argv(), description="Snapreel — иконка в трее")
+    )
     return Outcome(
         True,
-        f"ярлык с хоткеем {to_windows(hotkey)} создан: {path}. "
-        "Windows подхватывает такие комбинации через пару секунд.",
+        f"ярлык с хоткеем {to_windows(hotkey)} создан: {record}. "
+        "Windows подхватывает такие комбинации через пару секунд. "
+        f"«Snapreel» в «Пуске» открывает иконку в трее: {path}",
     )
 
 
 def _windows_remove() -> Outcome:
-    path = windows_shortcut_path()
-    if path.is_file():
+    removed = [
+        path for path in (windows_record_shortcut_path(), windows_shortcut_path()) if path.is_file()
+    ]
+    if not removed:
+        return Outcome(True, "ярлык snapreel не найден")
+    for path in removed:
         path.unlink()
-        return Outcome(True, f"ярлык удалён: {path}")
-    return Outcome(True, "ярлык snapreel не найден")
+    return Outcome(True, f"ярлык удалён: {removed[0]}")
 
 
 # --- macOS ----------------------------------------------------------------

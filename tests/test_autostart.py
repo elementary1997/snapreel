@@ -189,6 +189,71 @@ def test_the_windows_startup_path_lands_in_the_startup_folder(monkeypatch, tmp_p
     assert autostart.windows_startup_path().parent.name == "Startup"
 
 
+def test_the_start_menu_shortcut_opens_the_tray_and_a_second_one_carries_the_hotkey(
+    monkeypatch, tmp_path
+):
+    """В «Пуске» щёлкают по «Snapreel» — и ждут иконку, а не выделение области.
+
+    Прежде ярлык был один и запускал запись: человек открывал его из «Пуска»,
+    видел оверлей вместо иконки и решал, что программа не запускается. Свести
+    оба дела в один ярлык нельзя — цель у него одна, а Hotkey Windows слушает
+    только у ярлыков «Пуска».
+    """
+    programs = tmp_path / "Programs"
+    programs.mkdir()
+    monkeypatch.setattr(autostart, "windows_programs_path", lambda: programs)
+    scripts: list[str] = []
+    monkeypatch.setattr(autostart, "_powershell", scripts.append)
+
+    assert autostart.install("Ctrl+Alt+5", WINDOWS).ok
+
+    hotkey_script, tray_script = scripts
+    assert autostart.RECORD_SHORTCUT_NAME in hotkey_script
+    assert "$link.Hotkey = 'CTRL+ALT+5'" in hotkey_script
+    assert "record" in hotkey_script
+
+    assert autostart.SHORTCUT_NAME in tray_script
+    assert "$link.Hotkey" not in tray_script  # щелчок по нему поднимает иконку
+    assert "tray" in tray_script
+
+
+def test_the_clicked_shortcut_is_rewritten_from_scratch(monkeypatch, tmp_path):
+    """`CreateShortcut` открывает существующий файл, а не заводит новый.
+
+    Прежний `Snapreel.lnk` носил комбинацию, и уцелевшее свойство Hotkey
+    поднимало бы иконку вместо записи. Комбинация к этому моменту уже лежит
+    на своём ярлыке, так что уборка ничего не отнимает.
+    """
+    programs = tmp_path / "Programs"
+    programs.mkdir()
+    monkeypatch.setattr(autostart, "windows_programs_path", lambda: programs)
+    monkeypatch.setattr(autostart, "_powershell", lambda script: None)
+    old = programs / autostart.SHORTCUT_NAME
+    old.write_text("ярлык на запись с прежней комбинацией", encoding="utf-8")
+
+    assert autostart.install("Ctrl+Alt+5", WINDOWS).ok
+    assert not old.exists()  # его пересоздаст powershell, уже с целью «трей»
+
+
+def test_removing_takes_both_shortcuts(monkeypatch, tmp_path):
+    programs = tmp_path / "Programs"
+    programs.mkdir()
+    monkeypatch.setattr(autostart, "windows_programs_path", lambda: programs)
+    for name in (autostart.SHORTCUT_NAME, autostart.RECORD_SHORTCUT_NAME):
+        (programs / name).write_text("ярлык", encoding="utf-8")
+
+    assert autostart.remove(WINDOWS).ok
+    assert list(programs.iterdir()) == []
+
+
+def test_removing_nothing_is_not_a_failure(monkeypatch, tmp_path):
+    programs = tmp_path / "Programs"
+    programs.mkdir()
+    monkeypatch.setattr(autostart, "windows_programs_path", lambda: programs)
+
+    assert autostart.remove(WINDOWS).ok
+
+
 # --- имена ярлыков Windows -------------------------------------------------
 
 
@@ -201,6 +266,7 @@ def test_shortcut_names_are_ascii_only():
     иероглифами, то есть дело в представимости, а не в самой кириллице.
     """
     assert autostart.SHORTCUT_NAME.isascii()
+    assert autostart.RECORD_SHORTCUT_NAME.isascii()
     assert autostart.STARTUP_NAME.isascii()
 
 
