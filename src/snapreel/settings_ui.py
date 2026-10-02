@@ -672,6 +672,16 @@ class SettingsWindow(QDialog):
         это уже поломка, и молчать о ней нельзя.
         """
         from . import hotkeys
+        from .platform_info import Platform, detect
+
+        env = detect()
+        if env.platform is Platform.LINUX_WAYLAND and not env.is_wsl:
+            refusal = hotkeys.why_silent(env)
+            return (
+                "назначение комбинаций подтвердите в системном диалоге после закрытия настроек"
+                if refusal is None
+                else refusal
+            )
 
         try:
             outcome = autostart.install(config.hotkey_mp4)
@@ -726,7 +736,17 @@ def _hotkey_status(note: str | None = None) -> QLabel:
     label.setWordWrap(True)
     label.setContentsMargins(0, GAP, 0, 0)
     if refusal is None:
-        _restyle(label, "ok", "Комбинации слушает иконка в трее — назначать их в системе не нужно.")
+        if hotkeys.mechanism() == "портал GlobalShortcuts":
+            _restyle(
+                label,
+                "hint",
+                "В Wayland комбинации подтверждаются в системном диалоге рабочего стола. "
+                "Сочетания выше предлагаются порталу; окончательные выбираются в этом диалоге.",
+            )
+        else:
+            _restyle(
+                label, "ok", "Комбинации слушает иконка в трее — назначать их в системе не нужно."
+            )
     else:
         _restyle(label, "error", refusal)
     return label

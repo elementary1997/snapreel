@@ -57,6 +57,14 @@ def detect() -> Environment:
     raise RuntimeError(f"платформа {system} не поддерживается")
 
 
+def uses_screencast_portal(env: Environment | None = None) -> bool:
+    env = env or detect()
+    if env.platform is not Platform.LINUX_WAYLAND or env.is_wsl:
+        return False
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").upper().split(":")
+    return any(name in {"KDE", "GNOME", "UNITY"} for name in desktop)
+
+
 def prefers_dark(env: Environment | None = None) -> bool | None:
     """Тёмная ли тема у системы. None — спросить не вышло.
 

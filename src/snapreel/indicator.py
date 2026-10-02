@@ -211,3 +211,88 @@ class RecordingIndicator:
             except RuntimeError:  # окно уже убрано самим Qt
                 pass
         self.windows = []
+
+
+class PortalIndicator:
+    """В Wayland окно нельзя надёжно поставить за границами записываемой области.
+
+    Не рисуем рамку и панель поверх экрана: они попали бы в клип. Остановка
+    доступна в меню трея; разовая команда получает временную иконку записи.
+    """
+
+    def __init__(
+        self,
+        region,
+        *,
+        max_seconds,
+        min_seconds,
+        is_finished,
+        elapsed,
+        request_stop,
+        env=None,
+        resident=False,
+    ):
+        from PySide6.QtCore import QTimer
+
+        from .qt import application
+
+        application()
+        self.max_seconds = max_seconds
+        self.min_seconds = min_seconds
+        self.is_finished = is_finished
+        self.elapsed = elapsed
+        self.request_stop = request_stop
+        self.user_stopped = False
+        self.loop = None
+        self.icon = None
+        self.action = None
+        self.timer = QTimer()
+        self.timer.timeout.connect(self._tick)
+        if not resident:
+            from PySide6.QtWidgets import QMenu, QSystemTrayIcon
+
+            from .tray import icon
+
+            self.icon = QSystemTrayIcon(icon(True))
+            self.menu = QMenu()
+            self.action = self.menu.addAction("Остановить запись")
+            self.action.triggered.connect(self._stop)
+            self.icon.setContextMenu(self.menu)
+            self.icon.show()
+        self.timer.start(POLL_MS)
+
+    def _stop(self):
+        if self.elapsed() >= self.min_seconds:
+            self.user_stopped = True
+            self.request_stop()
+            if self.loop:
+                self.loop.quit()
+
+    def _tick(self):
+        seconds = self.elapsed()
+        if self.icon:
+            self.icon.setToolTip(
+                f"snapreel — запись {format_seconds(seconds)} / {format_seconds(self.max_seconds)}"
+            )
+            self.action.setEnabled(seconds >= self.min_seconds)
+        if self.is_finished() or seconds >= self.max_seconds:
+            if not self.is_finished():
+                self.request_stop()
+            if self.loop:
+                self.loop.quit()
+
+    def run(self):
+        from PySide6.QtCore import QEventLoop
+
+        self.loop = QEventLoop()
+        try:
+            if not self.is_finished():
+                self.loop.exec()
+        finally:
+            self.loop = None
+            self.timer.stop()
+            if self.icon:
+                self.icon.hide()
+                self.icon.deleteLater()
+                self.menu.deleteLater()
+        return self.user_stopped

@@ -42,6 +42,13 @@ def macos_copy_text(text: str) -> None:
 
 
 def wayland_copy_files(paths: list[Path]) -> None:
+    from . import wayland_owner
+
+    try:
+        wayland_owner.copy_files(paths)
+        return
+    except (ClipboardError, OSError):
+        pass  # старый композитор: внешний wl-copy переживёт нашу команду
     if not shutil.which("wl-copy"):
         raise ClipboardError("не найден wl-copy — установите wl-clipboard")
     payload = "\n".join(file_uri(p) for p in paths) + "\n"

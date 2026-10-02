@@ -157,6 +157,8 @@ class TrayApp:
                 checked=autostart.autostart_enabled(self.env),
             ),
         ]
+        if self._running is not None:
+            items.insert(2, Item("stop", "Остановить запись", self.stop_recording))
         if self._installed is not None:
             # новая версия уже лежит на диске, а работает всё ещё старая:
             # человеку остаётся один шаг, и делать этот шаг самому — искать
@@ -210,6 +212,9 @@ class TrayApp:
     def _record_now(self, as_gif: bool) -> None:
         """Выделение и запись — здесь; упаковка — фоновым потоком."""
         if self.recording:
+            if self._running is not None:
+                self.stop_recording()
+                return
             self._notify("snapreel", "запись уже идёт")
             return
         if self.settings_open:
@@ -296,11 +301,23 @@ class TrayApp:
         finally:
             # рамка закрылась: останавливать больше нечего
             self._running = None
+            self.refresh()
         return lambda: recorder.finish(session)
 
     def _remember(self, recording) -> None:
         """Запоминает идущую запись — за неё дёргает «Выйти»."""
         self._running = recording
+        self.refresh()
+
+    def stop_recording(self) -> None:
+        recording = self._running
+        if recording is None:
+            return
+        if recording.elapsed < self.config.min_seconds:
+            self._notify("snapreel", "остановка станет доступна после минимального времени записи")
+            return
+        recording.user_stopped = True
+        recording.request_stop()
 
     def _on_main(self, job: Callable[[], None]) -> None:
         """Переносит работу в главный поток, если есть кому её передать."""
@@ -384,8 +401,8 @@ class TrayApp:
     def bind_hotkeys(self) -> None:
         """Перевешивает комбинации на текущий конфиг.
 
-        Отказ — не повод гаснуть, но и не повод молчать: в Wayland глобальных
-        клавиш нет вовсе, а на X11 комбинацию мог занять рабочий стол.
+        Отказ — не повод гаснуть, но и не повод молчать: в Wayland портал
+        может отказать в разрешении, а на X11 комбинацию мог занять рабочий стол.
         Причина запоминается (её показывает окно настроек) и уходит
         уведомлением: `stderr` у оконной сборки Windows никто не читает.
         """

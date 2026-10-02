@@ -19,8 +19,15 @@ def test_x11_needs_xclip_not_wayland_tools():
     assert "wl-copy" not in keys(X11)
 
 
-def test_wayland_needs_its_own_stack():
+def test_wayland_needs_its_own_stack(monkeypatch):
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "sway")
     assert {"wf-recorder", "wl-copy"} <= keys(WAYLAND)
+
+
+def test_kde_wayland_needs_portals_and_gstreamer_instead_of_wf_recorder(monkeypatch):
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
+    assert {"gstreamer", "screencast-portal", "kde-portal", "wl-copy"} <= keys(WAYLAND)
+    assert "wf-recorder" not in keys(WAYLAND)
     assert "xclip" not in keys(WAYLAND)
 
 

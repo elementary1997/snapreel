@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from snapreel import hotkeys, hotkeys_x11
+from snapreel import hotkeys, hotkeys_portal, hotkeys_x11
 from snapreel.config import Config
 from snapreel.platform_info import Environment, Platform
 
@@ -18,6 +18,11 @@ WSL = Environment(platform=Platform.LINUX_WAYLAND, is_wsl=True)
 X11 = Environment(platform=Platform.LINUX_X11, is_wsl=False)
 WINDOWS = Environment(platform=Platform.WINDOWS, is_wsl=False)
 MACOS = Environment(platform=Platform.MACOS, is_wsl=False)
+
+
+@pytest.fixture(autouse=True)
+def no_portal(monkeypatch):
+    monkeypatch.setattr(hotkeys_portal, "available", lambda: False)
 
 
 @pytest.fixture
@@ -32,7 +37,7 @@ def x_server(monkeypatch):
 
 
 def test_a_wayland_session_says_why_the_hotkeys_are_silent():
-    """Композитор глобальные клавиши приложению не отдаёт — обойти нечем."""
+    """Если портала нет, остаётся назначение средствами рабочего стола."""
     refusal = hotkeys.why_silent(WAYLAND)
 
     assert refusal is not None

@@ -927,3 +927,29 @@ def test_a_tray_without_qt_explains_itself(monkeypatch, tmp_path):
         tray.run(Config(), tmp_path / "c.toml", ENV)
 
     assert "PySide6" in str(failure.value)
+
+
+def test_stop_action_obeys_minimum_time_and_never_waits_for_the_process(tray_app):
+    from types import SimpleNamespace
+
+    calls = []
+    recording = SimpleNamespace(elapsed=0.0, request_stop=lambda: calls.append("stop"))
+    tray_app.app._remember(recording)
+    assert "stop" in tray_app.keys()
+    tray_app.item("stop").action()
+    assert not calls
+    recording.elapsed = tray_app.app.config.min_seconds
+    tray_app.item("stop").action()
+    assert calls == ["stop"]
+    assert recording.user_stopped
+
+
+def test_a_repeated_hotkey_stops_the_current_recording(tray_app):
+    from types import SimpleNamespace
+
+    calls = []
+    tray_app.app._running = SimpleNamespace(elapsed=10, request_stop=lambda: calls.append("stop"))
+    tray_app.app._busy = True
+    tray_app.app._record_now(False)
+    assert calls == ["stop"]
+    assert not tray_app.recorded

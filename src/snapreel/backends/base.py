@@ -42,6 +42,11 @@ class Recording:
 
     def stop(self, timeout: float = 10.0) -> int:
         """Просит процесс дописать файл и дожидается его завершения."""
+        self.request_stop()
+        return self.wait(timeout)
+
+    def request_stop(self) -> None:
+        """Главный поток только просит остановку; ожидание оставляем упаковке."""
         if self.process.poll() is None:
             try:
                 if self.graceful_stop == "q" and self.process.stdin:
@@ -51,7 +56,6 @@ class Recording:
                     self.process.send_signal(signal.SIGINT)
             except (OSError, ValueError):
                 pass
-        return self.wait(timeout)
 
     def wait(self, timeout: float = 10.0) -> int:
         try:

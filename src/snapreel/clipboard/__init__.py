@@ -43,7 +43,8 @@ def copy_files(paths: list[Path], env: Environment | None = None, resident: bool
     владеет он сам и отдаёт файл сразу в двух типах: Chromium и Electron
     спрашивают один, файловые менеджеры и Telegram другой. Разовому
     `snapreel record` так нельзя — с концом процесса пропало бы и содержимое,
-    поэтому ему остаются `xclip` и `wl-copy`, которые его переживают.
+    поэтому в X11 ему остаётся `xclip`. В Wayland отдельный владелец
+    data-control объявляет оба типа и переживает команду; без него — `wl-copy`.
     """
     env = env or detect()
     if resident and _has_x_display(env):

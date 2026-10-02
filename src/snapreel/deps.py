@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from . import proc
 from .config import Config
-from .platform_info import Environment, Platform, detect
+from .platform_info import Environment, Platform, detect, uses_screencast_portal
 
 
 @dataclass(frozen=True)
@@ -69,6 +69,33 @@ WF_RECORDER = Requirement(
     },
 )
 
+GSTREAMER = Requirement(
+    key="gstreamer",
+    reason="захват разрешённых экранов KDE/GNOME через PipeWire",
+    packages={
+        "apt": "gstreamer1.0-pipewire gstreamer1.0-plugins-base gstreamer1.0-plugins-good "
+        "gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav",
+    },
+)
+
+SCREENCAST_PORTAL = Requirement(
+    key="screencast-portal",
+    reason="системное разрешение на захват экрана Wayland",
+    packages={"apt": "xdg-desktop-portal"},
+)
+
+KDE_PORTAL = Requirement(
+    key="kde-portal",
+    reason="реализация порталов KDE Plasma",
+    packages={"apt": "xdg-desktop-portal-kde"},
+)
+
+GNOME_PORTAL = Requirement(
+    key="gnome-portal",
+    reason="реализация портала GNOME",
+    packages={"apt": "xdg-desktop-portal-gnome"},
+)
+
 XCB_CURSOR = Requirement(
     key="libxcb-cursor",
     reason="без неё Qt не поднимет окно: с версии 6.5 плагин xcb требует эту библиотеку",
@@ -115,11 +142,43 @@ def required(env: Environment | None = None) -> list[Requirement]:
     if env.platform is Platform.LINUX_X11:
         items += [XCLIP, NOTIFY_SEND]
     elif env.platform is Platform.LINUX_WAYLAND:
-        items += [WF_RECORDER, WL_CLIPBOARD, NOTIFY_SEND]
+        if uses_screencast_portal(env):
+            import os
+
+            portal = (
+                KDE_PORTAL
+                if "KDE" in os.environ.get("XDG_CURRENT_DESKTOP", "").upper().split(":")
+                else GNOME_PORTAL
+            )
+            items += [GSTREAMER, SCREENCAST_PORTAL, portal]
+        else:
+            items.append(WF_RECORDER)
+        items += [WL_CLIPBOARD, NOTIFY_SEND]
     return items
 
 
 def is_satisfied(requirement: Requirement, config: Config | None = None) -> bool:
+    if requirement.key == "gstreamer":
+        from .backends.base import CaptureError
+        from .gstreamer import Gst
+
+        try:
+            return not Gst().plugins_missing(True)
+        except CaptureError:
+            return False
+    if requirement.key in {"screencast-portal", "kde-portal", "gnome-portal"}:
+        from .portal import PATH, Gio, PortalError
+
+        gio = None
+        try:
+            gio = Gio()
+            xml = gio.call(PATH, "org.freedesktop.DBus.Introspectable", "Introspect")[0]
+            return 'interface name="org.freedesktop.portal.ScreenCast"' in xml
+        except PortalError:
+            return False
+        finally:
+            if gio:
+                gio.close()
     if requirement.key == "libxcb-cursor":
         # это библиотека, а не команда: её ищет линковщик, а не PATH
         return _library_present("libxcb-cursor.so.0")
@@ -155,9 +214,14 @@ def install_commands(manager: str, requirements: list[Requirement]) -> list[list
     """Команды установки. Для winget — по одной на пакет, он не берёт списком."""
     if manager not in KNOWN_MANAGERS:
         raise ValueError(f"неизвестный пакетный менеджер {manager!r}")
-    packages = [
-        package for requirement in requirements if (package := requirement.package_for(manager))
-    ]
+    packages = list(
+        dict.fromkeys(
+            name
+            for requirement in requirements
+            if (package := requirement.package_for(manager))
+            for name in package.split()
+        )
+    )
     if not packages:
         return []
     if manager == "winget":

@@ -43,6 +43,34 @@ STARTUP_NAME = "Snapreel Tray.lnk"
 # То же имя до 0.6.3: у кого автозапуск прописан им, тот вправе его снять.
 LEGACY_STARTUP_NAME = "Snapreel (трей).lnk"
 DESKTOP_ENTRY_NAME = "snapreel.desktop"
+PORTAL_APP_ID = "org.snapreel.Snapreel"
+PORTAL_ENTRY_MARKER = "# snapreel portal identity\n"
+
+
+def portal_entry_path() -> Path:
+    base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    return base / "applications" / f"{PORTAL_APP_ID}.desktop"
+
+
+def ensure_portal_entry() -> None:
+    path = portal_entry_path()
+    content = PORTAL_ENTRY_MARKER + desktop_entry().replace(
+        "X-GNOME-Autostart-enabled=true\n", "NoDisplay=true\n"
+    )
+    if path.exists():
+        old = path.read_text(encoding="utf-8")
+        if not old.startswith(PORTAL_ENTRY_MARKER) or old == content:
+            return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def remove_portal_entry() -> None:
+    path = portal_entry_path()
+    if path.exists() and path.read_text(encoding="utf-8").startswith(PORTAL_ENTRY_MARKER):
+        path.unlink()
+
+
 # Подпись ярлыка для систем, чья кодировка русского не знает: там наша
 # обычная превратилась бы в строку вопросительных знаков.
 ASCII_DESCRIPTION = "Snapreel: screen area to clipboard"
@@ -220,6 +248,15 @@ def install(hotkey: str, env: Environment | None = None) -> Outcome:
         return _windows_install(hotkey)
     if env.platform is Platform.MACOS:
         return _macos_hint(hotkey)
+    if env.platform is Platform.LINUX_WAYLAND and not env.is_wsl:
+        from .hotkeys_portal import available
+
+        if available():
+            return Outcome(
+                True,
+                "сочетания будут предложены системному порталу при следующем запуске трея; "
+                "окончательный выбор подтверждается в системном диалоге",
+            )
     return _gnome_install(hotkey)
 
 
@@ -300,6 +337,9 @@ def _gnome_here() -> bool:
     Спрашиваем саму схему: имя рабочего стола в разных сборках пишут
     по-разному, а `gsettings` встречается и там, где GNOME нет.
     """
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").upper().split(":")
+    if desktop != [""] and not any(name in {"GNOME", "UNITY"} for name in desktop):
+        return False
     if not shutil.which("gsettings"):
         return False
     try:

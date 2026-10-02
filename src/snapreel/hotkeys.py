@@ -1,10 +1,10 @@
 """Глобальные комбинации: кто их ловит и почему иногда не ловит никто.
 
 Работает на Windows, X11 и macOS (последней нужно разрешение «Универсальный
-доступ»). В Wayland глобальный перехват клавиш композитором запрещён — там
-вешайте `snapreel record` на системный хоткей окружения.
+доступ»). В Wayland действия приходят через GlobalShortcuts, если рабочий
+стол предоставляет этот портал; иначе нужен системный хоткей окружения.
 
-Ловцов два. Обычно это pynput, но он слушает X11 через расширение RECORD, а
+На X11 обычно используется pynput, но он слушает через расширение RECORD, а
 оно есть не везде: без него поток pynput умирает молча, и человек видит лишь
 то, что ни одна комбинация не работает. Поэтому на таком сервере в дело идёт
 `hotkeys_x11` — штатный `XGrabKey`, которому RECORD не нужен.
@@ -37,14 +37,10 @@ def why_silent(env: Environment | None = None) -> str | None:
     хоткей» выглядело беспричинным.
     """
     env = env or detect()
-    if env.platform is Platform.LINUX_WAYLAND and not env.is_wsl:
-        # композитор глобальных клавиш приложению не отдаёт, и обойти это
-        # нечем: XWayland видит только собственные окна
-        return (
-            "В Wayland глобальные комбинации приложению не отдаются. Назначьте "
-            "команду «snapreel record» на комбинацию средствами рабочего стола — "
-            "иконку в трее при этом можно не закрывать."
-        )
+    if _uses_portal(env):
+        from . import hotkeys_portal
+
+        return None if hotkeys_portal.available() else hotkeys_portal.HELP
     if util.find_spec("pynput") is None and not _grab_possible(env):
         return "Нет pynput — ставится командой pip install 'snapreel[ui]'."
     if env.is_linux and not _grab_possible(env) and _record_missing():
@@ -89,11 +85,12 @@ def can_probe(env: Environment | None = None) -> bool:
     Нельзя на macOS: слушатель pynput без разрешения «Универсальный доступ»
     не отказывает, а вызывает abort в своём потоке — перехватить нечем, и
     `doctor`, который обязан работать в любом окружении, умер бы вместо
-    диагностики. Везде остальном проба безобидна и полезна: она видит и
+    диагностики. Портал Wayland тоже не пробуем: он открыл бы диалог
+    разрешения в диагностической команде. В остальных случаях проба видит и
     занятую соседом комбинацию, и не подключившийся к экрану pynput.
     """
     env = env or detect()
-    return env.platform is not Platform.MACOS
+    return env.platform is not Platform.MACOS and not _uses_portal(env)
 
 
 def mechanism(env: Environment | None = None) -> str:
@@ -101,7 +98,13 @@ def mechanism(env: Environment | None = None) -> str:
     env = env or detect()
     if why_silent(env) is not None:
         return "не слушаются"
+    if _uses_portal(env):
+        return "портал GlobalShortcuts"
     return "перехват X11" if _needs_grab(env) else "pynput"
+
+
+def _uses_portal(env: Environment) -> bool:
+    return env.platform is Platform.LINUX_WAYLAND and not env.is_wsl
 
 
 def _needs_grab(env: Environment) -> bool:
@@ -154,11 +157,20 @@ def _grab(config: Config, handler: Callable[[bool], None]):
 def listen(config: Config, handler: Callable[[bool], None], env: Environment | None = None):
     """Вешает обе комбинации и сразу отдаёт слушателя, ничего не ожидая.
 
-    `handler(as_gif)` вызывается в потоке pynput, а окна оттуда трогать
+    `handler(as_gif)` вызывается в потоке слушателя, а окна оттуда трогать
     нельзя: трей на нажатие лишь передаёт действие в главный поток
     (`TrayApp._on_main`). Кому нужен главный поток целиком, тому `run`.
     """
     env = env or detect()
+    if _uses_portal(env):
+        from . import hotkeys_portal
+
+        listener = hotkeys_portal.Listener(config, handler)
+        try:
+            listener.start()
+        except hotkeys_portal.PortalError as exc:
+            raise HotkeyError(str(exc)) from exc
+        return listener
     refusal = why_silent(env)
     if refusal is not None:
         raise HotkeyError(refusal)

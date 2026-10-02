@@ -96,13 +96,24 @@ def start(
     if problems:
         raise CaptureError("; ".join(problems))
 
-    if region is None:
-        region = select_region(env)
-    region = normalize(clamp(region, virtual_desktop(env)))
+    try:
+        prepare = getattr(backend, "prepare", None)
+        if prepare is not None:
+            prepare()
+        if region is None:
+            selector = getattr(backend, "select_region", select_region)
+            region = selector(env)
+        bounds = getattr(backend, "desktop", None) or virtual_desktop(env)
+        region = normalize(clamp(region, bounds))
 
-    storage.prune(config)
-    video_path = storage.new_path(config, ".mp4")
-    recording = backend.start(region, video_path, config.max_seconds)
+        storage.prune(config)
+        video_path = storage.new_path(config, ".mp4")
+        recording = backend.start(region, video_path, config.max_seconds)
+    except BaseException:
+        close = getattr(backend, "close", None)
+        if close is not None:
+            close()
+        raise
     session = Session(
         config=config,
         env=env,
@@ -116,7 +127,8 @@ def start(
         on_started(recording)
 
     try:
-        widget_cls = _indicator_class() if indicator else None
+        factory = getattr(backend, "indicator_class", None)
+        widget_cls = (factory(resident) if factory else _indicator_class()) if indicator else None
         if widget_cls is not None:
             widget = widget_cls(
                 region,
@@ -124,12 +136,13 @@ def start(
                 min_seconds=config.min_seconds,
                 is_finished=lambda: recording.finished,
                 elapsed=lambda: recording.elapsed,
-                request_stop=recording.stop,
+                request_stop=getattr(recording, "request_stop", recording.stop),
                 env=env,
             )
             session.user_stopped = widget.run()
         else:
             _wait_out(recording, config.max_seconds)
+        session.user_stopped = session.user_stopped or getattr(recording, "user_stopped", False)
     except BaseException:
         recording.stop(timeout=20)  # оверлей сорвался — ffmpeg не бросаем
         raise

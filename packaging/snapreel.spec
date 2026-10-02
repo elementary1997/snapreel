@@ -24,6 +24,12 @@ hidden = [
     "snapreel.indicator",
     "snapreel.tray",
     "snapreel.hotkeys_x11",
+    "snapreel.hotkeys_portal",
+    "snapreel.portal",
+    "snapreel.screencast",
+    "snapreel.gstreamer",
+    "snapreel.backends.portal",
+    "snapreel.clipboard.wayland_owner",
 ]
 
 # pynput нужен хоткеям, PySide6 — окнам и трею. Наличие проверяется find_spec,
@@ -112,6 +118,18 @@ analysis = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
+
+# Плагины GStreamer берутся с машины пользователя. Ядро со сборочного
+# раннера может быть старее этих плагинов; смешивание ломает их загрузку.
+if sys.platform not in ("win32", "darwin"):
+    host_libraries = (
+        "libgstreamer-1.0", "libgst", "libgio-2.0", "libglib-2.0",
+        "libgobject-2.0", "libgmodule-2.0", "libgthread-2.0", "libwayland-client",
+    )
+    analysis.binaries = [
+        entry for entry in analysis.binaries
+        if not os.path.basename(entry[0]).startswith(host_libraries)
+    ]
 
 pyz = PYZ(analysis.pure, analysis.zipped_data, cipher=block_cipher)
 

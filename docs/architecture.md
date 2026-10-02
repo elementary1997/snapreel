@@ -43,7 +43,7 @@ graph TD
     rec[recorder.py<br/>сценарий записи]
     sel[selector.py<br/>оверлей выделения · Qt]
     ind[indicator.py<br/>рамка и таймер · Qt]
-    back[backends/<br/>gdigrab · x11grab · wf-recorder · avfoundation]
+    back[backends/<br/>gdigrab · x11grab · wf-recorder · ScreenCast · avfoundation]
     clip[clipboard/<br/>CF_HDROP · osascript · xclip · wl-copy]
     enc[encode.py<br/>GIF и probe]
     store[storage.py<br/>имена файлов, retention]
@@ -177,9 +177,9 @@ graph LR
 
 ## Где будет больно
 
-- **Wayland.** Поддержан только wlroots (`wf-recorder`). GNOME и KDE со своими
-  протоколами записи потребуют отдельного бэкенда через xdg-desktop-portal
-  и PipeWire — это самая крупная известная дыра.
+- **Wayland.** KDE/GNOME используют портал ScreenCast и PipeWire (ADR-0012),
+  wlroots — `wf-recorder`. Разрешение принадлежит рабочему столу; отсутствие
+  позиции мониторов требует размещать разрешённые потоки рядом на снимке.
 - **Мультимонитор на macOS.** avfoundation снимает один экран; область,
   пересекающая границу дисплеев, обрежется.
 - **Трей в GNOME под Wayland.** Иконка появится только с расширением
@@ -187,3 +187,17 @@ graph LR
   `QSystemTrayIcon.isSystemTrayAvailable` и объясняет отсутствие человеку.
 - **Буфер обмена в X11** держится процессом `xclip`; если пользователь убьёт
   его, вставка перестанет работать до следующей записи.
+
+## KDE/GNOME Wayland
+
+`portal.py` обслуживает GIO/D-Bus в отдельных соединениях; `hotkeys_portal.py`
+регистрирует действия GlobalShortcuts, `screencast.py` держит разрешение на экран
+и выдаёт отдельный PipeWire remote каждому потребителю. `backends/portal.py`
+собирает снимок и запись выбранной области. Выделение происходит на снимке: Qt
+не может свободно расположить оверлей на рабочем столе Wayland.
+
+Нативные плагины GStreamer работают в служебном процессе того же исполняемого
+файла (`gstreamer.py`); главный процесс сохраняет окна и оркестрацию. Остановка
+передаётся через stdin, EOS дописывает MP4. `clipboard/wayland_owner.py` держит
+два файловых MIME-типа в отдельном владельце data-control, который переживает
+выход команды. Если протокола нет, остаётся прежний wl-copy.

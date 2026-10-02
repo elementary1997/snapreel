@@ -209,3 +209,87 @@ def _overlay_class():
             return normalize(self.result, self.min_side)
 
     return Overlay
+
+
+def select_preview(path, desktop: Region, config=None) -> Region:
+    """Wayland не разрешает размещать окно поверх произвольного монитора.
+
+    Выделяем на стоп-кадре разрешённых экранов: положение окна и его DPR
+    больше не влияют на координаты выбранной области.
+    """
+    from PySide6.QtCore import QRect, Qt
+    from PySide6.QtGui import QColor, QPainter, QPixmap
+    from PySide6.QtWidgets import QDialog
+
+    from .qt import application
+
+    application(config)
+    image = QPixmap(str(path))
+    if image.isNull():
+        raise OverlayUnavailable("Не прочитать кадр для выделения — повторите запись.")
+
+    class Preview(QDialog):
+        def __init__(self):
+            super().__init__()
+            self.setWindowTitle("snapreel — выделите область; Esc отменяет")
+            self.setCursor(Qt.CursorShape.CrossCursor)
+            screen = self.screen().availableGeometry()
+            self.resize(
+                min(desktop.width, screen.width() - 80), min(desktop.height, screen.height() - 80)
+            )
+            self.origin = None
+            self.current = None
+            self.region = None
+
+        def image_rect(self):
+            size = image.size().scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio)
+            return QRect(
+                (self.width() - size.width()) // 2,
+                (self.height() - size.height()) // 2,
+                size.width(),
+                size.height(),
+            )
+
+        def paintEvent(self, event):
+            painter = QPainter(self)
+            painter.fillRect(self.rect(), QColor("#151515"))
+            area = self.image_rect()
+            painter.drawPixmap(area, image)
+            if self.origin is not None and self.current is not None:
+                painter.setPen(QColor("#63aaff"))
+                painter.drawRect(QRect(self.origin, self.current).normalized())
+
+        def mousePressEvent(self, event):
+            if event.button() == Qt.MouseButton.RightButton:
+                self.reject()
+            elif self.image_rect().contains(event.position().toPoint()):
+                self.origin = self.current = event.position().toPoint()
+                self.update()
+
+        def mouseMoveEvent(self, event):
+            if self.origin is not None:
+                self.current = event.position().toPoint()
+                self.update()
+
+        def mouseReleaseEvent(self, event):
+            if self.origin is None:
+                return
+            area = self.image_rect()
+            box = QRect(self.origin, event.position().toPoint()).normalized().intersected(area)
+            region = Region(
+                desktop.x + round((box.x() - area.x()) * desktop.width / area.width()),
+                desktop.y + round((box.y() - area.y()) * desktop.height / area.height()),
+                round(box.width() * desktop.width / area.width()),
+                round(box.height() * desktop.height / area.height()),
+            )
+            if region.width >= 16 and region.height >= 16:
+                self.region = normalize(region)
+                self.accept()
+            else:
+                self.origin = self.current = None
+                self.update()
+
+    dialog = Preview()
+    if dialog.exec() != QDialog.DialogCode.Accepted or dialog.region is None:
+        raise SelectionCancelled("выделение отменено")
+    return dialog.region

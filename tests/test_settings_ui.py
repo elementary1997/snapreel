@@ -13,6 +13,7 @@ import tomllib
 import pytest
 
 from snapreel.config import Config
+from snapreel.platform_info import Environment, Platform
 
 try:
     from PySide6.QtCore import QEvent, Qt
@@ -30,9 +31,14 @@ def qt_app():
 
 
 @pytest.fixture
-def window(qt_app, tmp_path):
+def window(qt_app, tmp_path, monkeypatch):
     from snapreel.settings_ui import SettingsWindow
 
+    monkeypatch.setattr(
+        "snapreel.platform_info.detect", lambda: Environment(Platform.LINUX_X11, False)
+    )
+    monkeypatch.setattr("snapreel.hotkeys.why_silent", lambda env=None: None)
+    monkeypatch.setattr("snapreel.hotkeys.mechanism", lambda env=None: "pynput")
     widget = SettingsWindow(Config(), tmp_path / "config.toml")
     yield widget
     widget.close()  # закрытие дожидается фоновых потоков окна
@@ -373,6 +379,36 @@ def test_a_broken_registration_is_not_dressed_up_as_success(window, monkeypatch)
     monkeypatch.setattr("snapreel.hotkeys.why_silent", lambda env=None: None)
 
     assert window._apply_hotkey(window.config) == "powershell вернул ошибку"
+
+
+def test_wayland_settings_use_the_portal_instead_of_gnome_registration(window, monkeypatch):
+    monkeypatch.setattr(
+        "snapreel.platform_info.detect", lambda: Environment(Platform.LINUX_WAYLAND, False)
+    )
+    monkeypatch.setattr("snapreel.hotkeys.why_silent", lambda env=None: None)
+    monkeypatch.setattr(
+        "snapreel.autostart.install", lambda *args: pytest.fail("В KDE записали хоткей GNOME")
+    )
+    assert "системном диалоге" in window._apply_hotkey(window.config)
+
+
+def test_wayland_settings_explain_a_missing_portal(window, monkeypatch):
+    monkeypatch.setattr(
+        "snapreel.platform_info.detect", lambda: Environment(Platform.LINUX_WAYLAND, False)
+    )
+    monkeypatch.setattr("snapreel.hotkeys.why_silent", lambda env=None: "Установите портал KDE")
+    assert window._apply_hotkey(window.config) == "Установите портал KDE"
+
+
+def test_wayland_hint_explains_that_the_portal_chooses_the_final_shortcut(qt_app, monkeypatch):
+    from snapreel.settings_ui import _hotkey_status
+
+    monkeypatch.setattr("snapreel.hotkeys.why_silent", lambda env=None: None)
+    monkeypatch.setattr("snapreel.hotkeys.mechanism", lambda env=None: "портал GlobalShortcuts")
+    label = _hotkey_status()
+    assert label.property("role") == "hint"
+    assert "системном диалоге" in label.text()
+    label.deleteLater()
 
 
 def test_the_theme_is_offered_in_words():

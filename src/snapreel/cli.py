@@ -108,6 +108,35 @@ def main(argv: list[str] | None = None) -> int:
     # куда писать, и только потом решаем, чем именно
     attach_console()
     _make_output_printable()
+    actual = list(sys.argv[1:] if argv is None else argv)
+    if actual == ["--clipboard-worker"]:
+        import json
+
+        from .clipboard.wayland_owner import Owner
+
+        owner = None
+        try:
+            owner = Owner([Path(path) for path in json.loads(sys.stdin.readline(1_000_000))])
+            owner.start()
+            print("READY", flush=True)
+            owner.run()
+            return 0
+        except Exception as exc:
+            print(str(exc), flush=True)
+            return 1
+        finally:
+            if owner:
+                owner.close()
+    if actual and actual[0] == "--capture-worker":
+        from .gstreamer import Gst
+
+        try:
+            code, message = Gst().run(actual[1], float(actual[2]), sys.stdin.buffer)
+        except (CaptureError, ValueError, IndexError) as exc:
+            code, message = 1, str(exc)
+        if message:
+            print(message, file=sys.stderr)
+        return code
     # прошлое обновление отодвинуло старый бинарник — на Windows удалить его
     # можно было только после выхода из него, то есть теперь
     updates.clean_leftovers_if_frozen()
@@ -655,7 +684,10 @@ def _doctor(cfg) -> int:
         print(f"хоткеи:         {hotkeys.mechanism(env)}")
     else:
         print(f"хоткеи:         {hotkeys.mechanism(env)} (не проверяли)")
-        print("                проверка потребовала бы разрешения «Универсальный доступ»")
+        if env.platform is Platform.MACOS:
+            print("                проверка потребовала бы разрешения «Универсальный доступ»")
+        else:
+            print("                назначение подтверждается в системном диалоге портала")
 
     # Спрашиваем импортом, а не `find_spec`: имя модуля находится и в архиве
     # собранного бинарника, куда библиотеки Qt не попали, — и ответ «есть»

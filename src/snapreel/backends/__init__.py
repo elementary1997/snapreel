@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 
 from ..config import Config
-from ..platform_info import Environment, Platform, detect
+from ..platform_info import Environment, Platform, detect, uses_screencast_portal
 from .base import CaptureBackend, CaptureError, Recording
 from .linux import WfRecorderBackend, X11GrabBackend
 from .macos import AvFoundationBackend
@@ -39,4 +39,8 @@ def for_environment(config: Config, env: Environment | None = None) -> CaptureBa
             "и запускайте его оттуда. Чтобы записать сам экран WSLg — "
             "SNAPREEL_ALLOW_WSL=1."
         )
+    if uses_screencast_portal(env):
+        from .portal import ScreenCastBackend
+
+        return ScreenCastBackend(config)
     return _BY_PLATFORM[env.platform](config)

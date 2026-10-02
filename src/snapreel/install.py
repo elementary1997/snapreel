@@ -123,6 +123,8 @@ def uninstall(env: Environment | None = None) -> Outcome:
     env = env or detect()
     target = Path(sys.executable).resolve() if supported() else target_path(env)
     autostart.remove_autostart(env)
+    if env.is_linux:
+        autostart.remove_portal_entry()
     if not target.exists():
         return Outcome(True, "установленной копии не найдено")
 
