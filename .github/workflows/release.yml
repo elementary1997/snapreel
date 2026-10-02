@@ -9,7 +9,11 @@ permissions:
   contents: write
 
 jobs:
+  validate:
+    uses: ./.github/workflows/ci.yml
+
   build:
+    needs: validate
     # никакой шаг здесь не идёт дольше сборки ffmpeg: на холодном кеше самое
     # медленное задание релиза 0.2.0 заняло восемь минут. Всё, что висит
     # дольше, висит зря — ждать шесть часов дефолтного таймаута незачем
@@ -52,7 +56,9 @@ jobs:
           sudo apt-get install -y nasm xvfb \
             libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev libpulse-dev \
             libegl1 libdbus-1-3 libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-keysyms1 \
-            libxcb-xkb1 libxcb-shape0 libxcb-render-util0 libxcb-image0
+            libxcb-xkb1 libxcb-shape0 libxcb-render-util0 libxcb-image0 \
+            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav
 
       - name: FFmpeg build deps (macOS)
         if: runner.os == 'macOS'
@@ -149,6 +155,44 @@ jobs:
           if ! grep -qE '^pynput +есть' doctor.txt; then
             echo "в бинарник не попал pynput — трей не услышит хоткеи"; exit 1
           fi
+
+      - name: GStreamer worker finalizes MP4 without a display
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # Синтетические источники проверяют плагины и EOS, не запрашивая экран.
+          python - <<'PY'
+          import subprocess
+          from pathlib import Path
+          output = Path("gstreamer-smoke.mp4").resolve()
+          pipeline = (
+              "videotestsrc is-live=true ! "
+              "video/x-raw,format=I420,width=320,height=240,framerate=15/1 ! "
+              "videorate max-closing-segment-duplication-duration=0 ! "
+              "x264enc speed-preset=veryfast ! h264parse ! queue ! mux. "
+              "audiotestsrc is-live=true ! audioconvert ! avenc_aac ! aacparse ! "
+              "queue ! mux. mp4mux name=mux faststart=true ! "
+              f'filesink location="{output}"'
+          )
+          process = subprocess.Popen(
+              ["./dist/snapreel", "--capture-worker", pipeline, "2"],
+              stdin=subprocess.PIPE, stderr=subprocess.PIPE,
+          )
+          try:
+              code = process.wait(timeout=20)
+              reason = process.stderr.read().decode("utf-8", "replace")
+              assert code == 0, reason
+              data = output.read_bytes()
+              assert len(data) > 1024 and b"moov" in data and b"mdat" in data
+              assert b"avc1" in data and b"mp4a" in data
+          finally:
+              if process.poll() is None:
+                  process.kill()
+                  process.wait()
+              process.stdin.close()
+              process.stderr.close()
+              output.unlink(missing_ok=True)
+          PY
 
       - name: First run without a config
         if: runner.os == 'Linux'
@@ -351,13 +395,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          python scripts/release-notes.py "${{ github.ref_name }}"
           gh release create "${{ github.ref_name }}" \
             --title "snapreel ${{ github.ref_name }}" \
-            --notes "Готовые бинарники: ffmpeg внутри, ставить отдельно ничего не нужно.
-          На Linux остаются системные утилиты буфера обмена — \`snapreel setup\` покажет команду.
-
-          macOS: бинарник не подписан, при первом запуске снимите карантин:
-          \`xattr -d com.apple.quarantine ./snapreel-macos-*\`
-
-          Полный список изменений — CHANGELOG.md." \
+            --notes-file release-notes.md \
             artifacts/*

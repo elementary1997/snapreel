@@ -47,15 +47,17 @@ def test_a_region_outside_the_permitted_monitors_is_rejected():
         )
 
 
-def test_audio_and_file_paths_cannot_inject_pipeline_elements():
+def test_audio_and_file_paths_cannot_inject_pipeline_elements(tmp_path):
+    output = tmp_path / 'a " ! fakesink.mp4'
     pipeline = build_pipeline(
         Config(capture_audio=True, audio_device="device ! fakesink"),
         [Stream(1, Region(0, 0, 640, 480), 4)],
         Region(0, 0, 640, 480),
-        Path('/tmp/a " ! fakesink.mp4'),
+        output,
     )
     assert 'device="device ! fakesink"' in pipeline
-    assert 'location="/tmp/a \\" ! fakesink.mp4"' in pipeline
+    escaped = str(output).replace("\\", "\\\\").replace('"', '\\"')
+    assert f'location="{escaped}"' in pipeline
     assert "avenc_aac bitrate=128000" in pipeline
 
 
@@ -124,7 +126,8 @@ def test_kde_streams_without_a_position_can_be_recorded_and_closed(portal):
     assert session.streams[0].bounds == Region(0, 0, 5120, 1440)
     session.renew()
     fd = session.streams[0].fd
-    assert (tmp_path / "screencast.json").stat().st_mode & 0o777 == 0o600
+    if os.name == "posix":
+        assert (tmp_path / "screencast.json").stat().st_mode & 0o777 == 0o600
     session.close()
     assert not session.thread.is_alive()
     with pytest.raises(OSError):

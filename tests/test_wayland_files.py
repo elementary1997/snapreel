@@ -32,10 +32,12 @@ def test_data_control_failure_falls_back_to_a_file_uri(monkeypatch):
     monkeypatch.setattr(
         posix.proc, "run", lambda command, **kwargs: calls.append((command, kwargs))
     )
-    posix.wayland_copy_files([Path("/tmp/мой клип.gif")])
+    path = Path("/tmp/мой клип.gif")
+    posix.wayland_copy_files([path])
     command, options = calls[0]
     assert command == ["wl-copy", "--type", "text/uri-list"]
-    assert options["input"] == b"file:///tmp/%D0%BC%D0%BE%D0%B9%20%D0%BA%D0%BB%D0%B8%D0%BF.gif\n"
+    assert options["input"] == (path.resolve().as_uri() + "\n").encode()
+    assert b"%20" in options["input"] and b"%D0" in options["input"]
 
 
 def test_a_native_owner_does_not_start_a_second_clipboard_owner(monkeypatch):

@@ -217,7 +217,7 @@ def select_preview(path, desktop: Region, config=None) -> Region:
     Выделяем на стоп-кадре разрешённых экранов: положение окна и его DPR
     больше не влияют на координаты выбранной области.
     """
-    from PySide6.QtCore import QRect, Qt
+    from PySide6.QtCore import QRect, QRectF, Qt
     from PySide6.QtGui import QColor, QPainter, QPixmap
     from PySide6.QtWidgets import QDialog
 
@@ -275,7 +275,11 @@ def select_preview(path, desktop: Region, config=None) -> Region:
             if self.origin is None:
                 return
             area = self.image_rect()
-            box = QRect(self.origin, event.position().toPoint()).normalized().intersected(area)
+            box = (
+                QRectF(self.origin, event.position().toPoint())
+                .normalized()
+                .intersected(QRectF(area))
+            )
             region = Region(
                 desktop.x + round((box.x() - area.x()) * desktop.width / area.width()),
                 desktop.y + round((box.y() - area.y()) * desktop.height / area.height()),
