@@ -63,7 +63,9 @@ def build_pipeline(config: Config, streams, region: Region, output: Path, *, sna
         raise CaptureError(
             "Область вне разрешённых экранов — разрешите нужный монитор в диалоге портала."
         )
-    pipeline = f"compositor name=mix background=black {' '.join(positions)} ! "
+    # Нулевой кадр композитора чёрный: PipeWire присылает первый кадр позже.
+    timing = " start-time-selection=first" if snapshot else ""
+    pipeline = f"compositor name=mix background=black{timing} {' '.join(positions)} ! "
     pipeline += f"video/x-raw,width={region.width},height={region.height} ! videoconvert ! "
     if snapshot:
         pipeline += f"pngenc snapshot=true ! filesink location={_quote(str(output))} "

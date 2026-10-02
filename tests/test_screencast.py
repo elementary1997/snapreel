@@ -156,3 +156,17 @@ def test_cancelling_permission_closes_the_portal_without_creating_a_recording(po
         session.start()
     assert ("/session/test", "Close") in calls
     assert not session.thread.is_alive()
+
+
+def test_snapshot_waits_for_the_first_stream_frame_and_never_enables_audio():
+    pipeline = build_pipeline(
+        Config(capture_audio=True),
+        [Stream(12, Region(0, 0, 1920, 1080), 7)],
+        Region(0, 0, 1920, 1080),
+        Path("/tmp/preview.png"),
+        snapshot=True,
+    )
+    assert "start-time-selection=first" in pipeline
+    assert "pngenc snapshot=true" in pipeline
+    assert "pulsesrc" not in pipeline
+    assert "x264enc" not in pipeline
