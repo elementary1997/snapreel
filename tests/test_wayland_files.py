@@ -10,15 +10,15 @@ def test_portal_identity_never_enables_autostart_or_overwrites_another_entry(mon
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     autostart.ensure_portal_entry()
     path = autostart.portal_entry_path()
-    content = path.read_text()
+    content = path.read_text(encoding="utf-8")
     assert "NoDisplay=true" in content
     assert "X-GNOME-Autostart-enabled" not in content
     autostart.remove_portal_entry()
     assert not path.exists()
-    path.write_text("[Desktop Entry]\nName=User choice\n")
+    path.write_text("[Desktop Entry]\nName=User choice\n", encoding="utf-8")
     autostart.ensure_portal_entry()
     autostart.remove_portal_entry()
-    assert path.read_text() == "[Desktop Entry]\nName=User choice\n"
+    assert path.read_text(encoding="utf-8") == "[Desktop Entry]\nName=User choice\n"
 
 
 def test_data_control_failure_falls_back_to_a_file_uri(monkeypatch):
