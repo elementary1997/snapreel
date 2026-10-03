@@ -23,6 +23,7 @@ hidden = [
     "snapreel.selector",
     "snapreel.indicator",
     "snapreel.indicator_wayland",
+        "snapreel.overlay_wayland",
     "snapreel.wayland",
     "snapreel.tray",
     "snapreel.hotkeys_x11",

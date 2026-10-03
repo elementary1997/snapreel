@@ -164,6 +164,7 @@ class LayerClient(NativeClient):
         if not self.display:
             raise PortalError("Нет доступа к Wayland для подсветки области.")
         registry = self._marshal(self.display, 1, self.registry_interface, 1, p())
+        self.registry = registry
 
         def global_(data, proxy, name, interface, version):
             text = interface.decode()
@@ -206,7 +207,7 @@ class LayerClient(NativeClient):
             bounds = self.screens.get(self.output_names.get(name))
             if bounds is None:
                 continue
-            for edge in visible_border_edges(self.region, [bounds]):
+            for edge in self.edges(bounds):
                 self._surface(compositor, shm, shell, output, edge, bounds)
                 count += 1
         if count == 0:
@@ -219,6 +220,23 @@ class LayerClient(NativeClient):
             raise PortalError(self.error or "Wayland не подтвердил размеры рамки.")
         self.lib.wl_display_flush(self.display)
 
+    def edges(self, bounds):
+        return visible_border_edges(self.region, [bounds])
+
+    def interactive(self):
+        return False
+
+    def keyboard(self):
+        return False
+
+    def paint(self, edge):
+        return bytes(
+            (C.c_uint32 * (edge.width * edge.height))(*([0xFF63AAFF] * (edge.width * edge.height)))
+        )
+
+    def created(self, surface, edge, shm):
+        pass
+
     def _cancel(self):
         self.cancelled = True
 
@@ -226,8 +244,10 @@ class LayerClient(NativeClient):
         p, u, i, s = C.c_void_p, C.c_uint32, C.c_int, C.c_char_p
         surface = self._marshal(compositor, 0, self.surface_interface, 3, p())
         self._listen(surface, [([p], lambda *args: None), ([p], lambda *args: None)])
-        empty = self._marshal(compositor, 1, self.region_interface, 1, p())
-        self._marshal(surface, 5, None, 3, p(empty))
+        if not self.interactive():
+            empty = self._marshal(compositor, 1, self.region_interface, 1, p())
+            self._marshal(surface, 5, None, 3, p(empty))
+        self.created(surface, edge, shm)
         layer = self._marshal(
             shell, 0, self.layer, 1, p(), p(surface), p(output), u(3), s(b"snapreel-border")
         )
@@ -235,44 +255,54 @@ class LayerClient(NativeClient):
         self._marshal(layer, 1, None, 1, u(5))  # верхний левый угол
         self._marshal(layer, 2, None, 1, i(-1))  # не сдвигать окна и не обходить панель
         self._marshal(layer, 3, None, 1, i(edge.y - bounds.y), i(0), i(0), i(edge.x - bounds.x))
-        self._marshal(layer, 4, None, 1, u(0))  # никогда не принимать клавиатурный фокус
+        self._marshal(layer, 4, None, 1, u(1 if self.keyboard() else 0))
 
         def configure(data, proxy, serial, width, height):
             self._marshal(layer, 6, None, 1, u(serial))
             if width != edge.width or height != edge.height:
                 self.error = "Композитор изменил размеры рамки — подсветка отключена."
                 return
-            size = edge.width * edge.height * 4
-            fd = os.memfd_create("snapreel-border", os.MFD_CLOEXEC)
             try:
-                os.ftruncate(fd, size)
-                pixels = (C.c_uint32 * (edge.width * edge.height))(
-                    *([0xFF63AAFF] * (edge.width * edge.height))
-                )
-                os.write(fd, bytes(pixels))
-                pool = self._marshal(shm, 0, self.shm_pool_interface, 1, p(), i(fd), i(size))
-                buffer = self._marshal(
-                    pool,
-                    0,
-                    self.buffer_interface,
-                    1,
-                    p(),
-                    i(0),
-                    i(edge.width),
-                    i(edge.height),
-                    i(edge.width * 4),
-                    u(0),
-                )
-                self._listen(buffer, [([], lambda *args: None)])
-                self._marshal(surface, 1, None, 3, p(buffer), i(0), i(0))
-                self._marshal(surface, 2, None, 3, i(0), i(0), i(edge.width), i(edge.height))
-                self._marshal(surface, 6, None, 3)
-                self.lib.wl_display_flush(self.display)
+                self.attach(surface, shm, edge)
                 self.configured += 1
             except OSError as exc:
                 self.error = str(exc)
-            finally:
-                os.close(fd)
 
         self._listen(layer, [([u, u, u], configure), ([], lambda *args: self._cancel())])
         self._marshal(surface, 6, None, 3)
+
+    def destroy(self, proxy, opcode, version=1):
+        self.lib.wl_proxy_marshal_flags(proxy, opcode, None, version, 1)
+
+    def attach(self, surface, shm, edge):
+        p, u, i = C.c_void_p, C.c_uint32, C.c_int
+        size = edge.width * edge.height * 4
+        pixels = self.paint(edge)
+        fd = os.memfd_create("snapreel-overlay", os.MFD_CLOEXEC)
+        try:
+            os.ftruncate(fd, size)
+            import mmap
+
+            with mmap.mmap(fd, size) as memory:
+                memory[:] = pixels
+            pool = self._marshal(shm, 0, self.shm_pool_interface, 1, p(), i(fd), i(size))
+            buffer = self._marshal(
+                pool,
+                0,
+                self.buffer_interface,
+                1,
+                p(),
+                i(0),
+                i(edge.width),
+                i(edge.height),
+                i(edge.width * 4),
+                u(0),
+            )
+            self._listen(buffer, [([], lambda *args: self.destroy(buffer, 0))])
+            self.destroy(pool, 1)
+            self._marshal(surface, 1, None, 3, p(buffer), i(0), i(0))
+            self._marshal(surface, 2, None, 3, i(0), i(0), i(edge.width), i(edge.height))
+            self._marshal(surface, 6, None, 3)
+            self.lib.wl_display_flush(self.display)
+        finally:
+            os.close(fd)

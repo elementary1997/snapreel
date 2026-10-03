@@ -216,7 +216,7 @@ class RecordingIndicator:
 class PortalIndicator:
     """В Wayland окно нельзя надёжно поставить за границами записываемой области.
 
-    На KDE рамку размещает layer-shell, строго снаружи области. Остальным окружениям
+    На KDE рамку и панель размещает layer-shell, строго снаружи области. Остальным окружениям
     остаётся остановка из трея, чтобы плавающие окна не попадали в клип.
     """
 
@@ -248,6 +248,7 @@ class PortalIndicator:
         self.icon = None
         self.action = None
         self.border = None
+        self.panel = None
         self._build_border(region, desktop, env)
         self.timer = QTimer()
         self.timer.timeout.connect(self._tick)
@@ -284,6 +285,12 @@ class PortalIndicator:
         if target is not None:
             try:
                 self.border = Border(target)
+                from .overlay_wayland import Panel
+
+                try:
+                    self.panel = Panel(target, self.max_seconds)
+                except (PortalError, OSError):
+                    pass
             except (PortalError, OSError, ImportError):
                 pass  # сбой подсветки не должен прервать уже начатую запись
 
@@ -296,6 +303,9 @@ class PortalIndicator:
 
     def _tick(self):
         seconds = self.elapsed()
+        if self.panel and self.panel.update(seconds, seconds >= self.min_seconds):
+            self._stop()
+            return
         if self.icon:
             self.icon.setToolTip(
                 f"snapreel — запись {format_seconds(seconds)} / {format_seconds(self.max_seconds)}"
@@ -317,6 +327,8 @@ class PortalIndicator:
         finally:
             self.loop = None
             self.timer.stop()
+            if self.panel:
+                self.panel.close()
             if self.border:
                 self.border.close()
             if self.icon:

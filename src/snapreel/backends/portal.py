@@ -165,8 +165,20 @@ class ScreenCastBackend(CaptureBackend):
         return partial(PortalIndicator, resident=resident, desktop=self.desktop)
 
     def select_region(self, env):
+        import os
+
+        from ..portal import PortalError
+        from ..qt import application
         from ..selector import select_preview
 
+        application()
+        if "KDE" in os.environ.get("XDG_CURRENT_DESKTOP", "").upper().split(":"):
+            from ..overlay_wayland import select_live
+
+            try:
+                return select_live(self.desktop)
+            except (PortalError, OSError):
+                pass
         self.session.renew()
         with tempfile.TemporaryDirectory(prefix="snapreel-preview-") as directory:
             path = Path(directory) / "frame.png"
