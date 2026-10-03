@@ -5,6 +5,7 @@
 ## Status
 
 Accepted. Уточняет ADR-0003 и ADR-0010 для KDE/GNOME Wayland.
+Решение об отсутствии рамки в KDE уточнено ADR-0013.
 
 ## Context
 

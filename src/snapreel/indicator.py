@@ -216,8 +216,8 @@ class RecordingIndicator:
 class PortalIndicator:
     """В Wayland окно нельзя надёжно поставить за границами записываемой области.
 
-    Не рисуем рамку и панель поверх экрана: они попали бы в клип. Остановка
-    доступна в меню трея; разовая команда получает временную иконку записи.
+    На KDE рамку размещает layer-shell, строго снаружи области. Остальным окружениям
+    остаётся остановка из трея, чтобы плавающие окна не попадали в клип.
     """
 
     def __init__(
@@ -231,6 +231,7 @@ class PortalIndicator:
         request_stop,
         env=None,
         resident=False,
+        desktop=None,
     ):
         from PySide6.QtCore import QTimer
 
@@ -246,6 +247,8 @@ class PortalIndicator:
         self.loop = None
         self.icon = None
         self.action = None
+        self.border = None
+        self._build_border(region, desktop, env)
         self.timer = QTimer()
         self.timer.timeout.connect(self._tick)
         if not resident:
@@ -260,6 +263,29 @@ class PortalIndicator:
             self.icon.setContextMenu(self.menu)
             self.icon.show()
         self.timer.start(POLL_MS)
+
+    def _build_border(self, region, capture, env):
+        import os
+
+        if "KDE" not in os.environ.get("XDG_CURRENT_DESKTOP", "").upper().split(":"):
+            return
+        from PySide6.QtGui import QGuiApplication
+
+        from .indicator_wayland import Border, desktop_region
+        from .portal import PortalError
+
+        rectangles = [screen.geometry() for screen in QGuiApplication.screens()]
+        if not rectangles or capture is None:
+            return
+        left, top = min(r.x() for r in rectangles), min(r.y() for r in rectangles)
+        right = max(r.x() + r.width() for r in rectangles)
+        bottom = max(r.y() + r.height() for r in rectangles)
+        target = desktop_region(region, capture, Region(left, top, right - left, bottom - top))
+        if target is not None:
+            try:
+                self.border = Border(target)
+            except (PortalError, OSError, ImportError):
+                pass  # сбой подсветки не должен прервать уже начатую запись
 
     def _stop(self):
         if self.elapsed() >= self.min_seconds:
@@ -291,6 +317,8 @@ class PortalIndicator:
         finally:
             self.loop = None
             self.timer.stop()
+            if self.border:
+                self.border.close()
             if self.icon:
                 self.icon.hide()
                 self.icon.deleteLater()

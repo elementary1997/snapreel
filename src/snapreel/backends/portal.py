@@ -162,7 +162,7 @@ class ScreenCastBackend(CaptureBackend):
 
         from ..indicator import PortalIndicator
 
-        return partial(PortalIndicator, resident=resident)
+        return partial(PortalIndicator, resident=resident, desktop=self.desktop)
 
     def select_region(self, env):
         from ..selector import select_preview

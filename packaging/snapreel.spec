@@ -22,6 +22,8 @@ hidden = [
     "snapreel.backends.macos",
     "snapreel.selector",
     "snapreel.indicator",
+    "snapreel.indicator_wayland",
+    "snapreel.wayland",
     "snapreel.tray",
     "snapreel.hotkeys_x11",
     "snapreel.hotkeys_portal",

@@ -20,6 +20,8 @@
 
 | [0012](0012-screencast-pipewire.md) | ScreenCast/PipeWire и файловый буфер Wayland | Accepted | 2026-10-03 |
 
+| [0013](0013-wayland-recording-border.md) | Безопасная подсветка области через layer-shell | Accepted | 2026-10-03 |
+
 ## Что заслуживает ADR
 
 Решение, которое влияет на структуру или зависимости, трудно обратимо либо
