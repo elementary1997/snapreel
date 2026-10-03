@@ -23,7 +23,7 @@ def test_capture_scales_before_cropping_and_preserves_negative_monitor_positions
     assert "videocrop left=120 top=100 right=1160 bottom=500" in pipeline
     assert pipeline.index("videoscale") < pipeline.index("videocrop")
     assert "format=I420,framerate=30/1" in pipeline
-    assert "videorate max-closing-segment-duplication-duration=0" in pipeline
+    assert "videorate drop-only=true" in pipeline
     assert "mp4mux name=mux faststart=true" in pipeline
 
 

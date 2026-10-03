@@ -70,8 +70,9 @@ def build_pipeline(config: Config, streams, region: Region, output: Path, *, sna
     if snapshot:
         pipeline += f"pngenc snapshot=true ! filesink location={_quote(str(output))} "
     else:
+        # drop-only есть в GStreamer 1.20 и не продлевает клип дублями при EOS.
         pipeline += (
-            f"videorate max-closing-segment-duplication-duration=0 ! "
+            f"videorate drop-only=true ! "
             f"video/x-raw,format=I420,framerate={config.fps}/1 ! "
             f"x264enc speed-preset={config.preset} pass=qual quantizer={config.crf} ! "
             "h264parse ! queue ! mux. mp4mux name=mux faststart=true ! "

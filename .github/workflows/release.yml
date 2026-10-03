@@ -168,7 +168,7 @@ jobs:
           pipeline = (
               "videotestsrc is-live=true ! "
               "video/x-raw,format=I420,width=320,height=240,framerate=15/1 ! "
-              "videorate max-closing-segment-duplication-duration=0 ! "
+              "videorate drop-only=true ! "
               "x264enc speed-preset=veryfast ! h264parse ! queue ! mux. "
               "audiotestsrc is-live=true ! audioconvert ! avenc_aac ! aacparse ! "
               "queue ! mux. mp4mux name=mux faststart=true ! "
@@ -181,6 +181,9 @@ jobs:
           try:
               code = process.wait(timeout=20)
               reason = process.stderr.read().decode("utf-8", "replace")
+              if code != 0:
+                  diagnostic = reason.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                  print(f"::error title=GStreamer worker::{diagnostic}")
               assert code == 0, reason
               data = output.read_bytes()
               assert len(data) > 1024 and b"moov" in data and b"mdat" in data
